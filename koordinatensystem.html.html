@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Koordinatensystem</title>
+    <style>
+        html {
+            height: 100%;
+        }
+        body {
+            height: 97%;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 1px solid black;
+            cursor: crosshair;
+            background-color: white;
+        }
+        .controls {
+            margin: 0 5px 0 5px;
+            float: left;
+            width: 200px;
+            background-color: lightgray;
+            height: 100%;
+        }
+        .graph {
+            margin-left: 210px;
+        }
+        input {width: 3em;} 
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <b><input id="xname" style="font-weight:bold" type="text" size="2" value="x"/>-Achse</b><br>
+        <label for="xstart">von:</label>
+        <input type="number" id="xstart" value="-10">
+        <label for="xend">bis:</label>
+        <input type="number" id="xend" value="10">
+        <label for="xend">Schrittweite:</label>
+        <input type="number" id="xstep" value="1">
+        <hr>
+        <b><input id="yname" style="font-weight:bold" type="text" size="2" value="y"/>-Achse</b><br>
+        <label for="ystart">von:</label>
+        <input type="number" id="ystart" value="-5">
+        <label for="yend">bis:</label>
+        <input type="number" id="yend" value="10">
+        <label for="yend">Schrittweite:</label>
+        <input type="number" id="ystep" value="1">
+        <hr>
+        <!--<label for="gridSize">Rastergröße:</label>
+        <input type="number" id="gridSize" value="20" min="5" max="100"> px
+        <br>-->
+        <label for="subGrid">Unterteilung:</label><br>
+        <input type="number" id="subGrid" value="2" min="1" max="10"> Pkt. pro Kästchen
+        <hr>
+        <div  style="text-align: center"><button onclick="updateGrid()" style="width: 10em">⟳ Aktualisieren</button></div>
+        <hr>
+        <input type="radio" name="mode" value="point" id="pointmode" onchange="changemode(event)"><label for="pointmode">Punkt</label><br>
+        <input type="radio" name="mode" value="line" id="linemode" checked onchange="changemode(event)"><label for="linemode">Linie</label><br>
+        <input type="radio" name="mode" value="spline" id="splinemode" onchange="changemode(event)" disabled><label for="splinemode">Kurve</label><br>
+        <input type="radio" name="mode" value="text" id="textmode" onchange="changemode(event)"><label for="textmode">Text</label><br>
+        <input type="radio" name="mode" value="circle" id="circlemode" onchange="changemode(event)"><label for="circlemode">Kreis</label><br>
+        <hr>
+        Zeichenfarbe: <input type="color" id="color" value="#0000ff" onchange="changecolor()"/>
+        <hr>
+        <div  style="text-align: center">
+            <button onclick="clearCanvas()" style="color:red; width: 10em" >⎚ Löschen</button><br>
+            <button onclick="undoLastLine()" style="color: darkgreen; width: 10em" >⎌ Zurück</button><br>
+            <button onclick="copy()" style="color: purple; width: 10em" >📋 Kopieren</button><br>
+        </div>
+    </div>
+    <div class="graph">
+    <div style="text-align: center"><h1>Koordinatensystem</h1></div>
+    <canvas id="drawingCanvas" width="600" height="400"></canvas>
+    </div>
+    
+    <script>
+        const canvas = document.getElementById("drawingCanvas");
+        const ctx = canvas.getContext("2d");
+        let gridSize = 30;
+        let axisStep = 50;
+        let startPoint = null;
+        let currentPoint = null;
+        let isSettingStart = true;
+        let elements = [];
+        let selectedLine = null;
+        let controlPoint = null;
+        let lastmode = "linemode";
+        let numpoints = 0;
+        color = "#0000ff";
+
+        function changecolor() {
+            color=document.getElementById("color").value;
+        }
+        
+        function changemode(evt) {
+            if (evt.target.id=="splinemode") {
+                let n=elements.length-1;
+                for (; n>=0; n--) {
+                    if (! ("point" in elements[n])) break;
+                }
+                n=elements.length-1-n;
+                let nn=0;
+                if (n>=3) {
+                    nn=parseInt(prompt("Kurve durch die letzten ... Punkte:", n));
+                }
+                document.getElementById(lastmode ||"linemode").checked=true;
+                if (nn==null || nn<3) return;
+                if (nn>n) nn=n;
+                let points=[];
+                for (let i=elements.length-1; i>=elements.length-nn; i--) points.push({x: elements[i].point.x, y: elements[i].point.y});
+                elements.push({path: points, color});
+                numpoints=0;
+                drawLines();
+            } else {
+                lastmode=evt.target.id;
+            }
+            document.getElementById("splinemode").disabled=numpoints<3;
+        }
+
+        function copy() {
+            var img = document.createElement('img');
+            img.src = canvas.toDataURL()
+            var div = document.createElement('div');
+            div.contentEditable = true;
+            div.appendChild(img);
+            document.body.appendChild(div);
+            SelectText(div);
+            document.execCommand('Copy');
+            document.body.removeChild(div);
+        }
+
+        function SelectText(element) {
+            var doc = document;
+            if (doc.body.createTextRange) {
+                var range = document.body.createTextRange();
+                range.moveToElementText(element);
+                range.select();
+            } else if (window.getSelection) {
+                var selection = window.getSelection();
+                var range = document.createRange();
+                range.selectNodeContents(element);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+        }
+
+        function drawGrid() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = "#ccc";
+            ctx.lineWidth = 1;
+            
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            drawAxes();
+            drawLines();
+        }
+
+        function drawAxes() {
+            ctx.strokeStyle = "black";
+            ctx.fillStyle = "black";
+            ctx.lineWidth = 2;
+            ctx.font=Math.floor(gridSize*0.7)+"px Arial";
+            let centerX = canvas.width / 2;
+            let centerY = canvas.height / 2;
+            
+            ctx.beginPath();    
+            ctx.moveTo(x0, 0);
+            ctx.lineTo(x0, canvas.height);
+            ctx.moveTo(0, y0);
+            ctx.lineTo(canvas.width, y0);
+            ctx.stroke();
+
+            let ny=(ymax-ymin)/ystep;
+            let yshift = ymin/ystep;
+            ctx.textAlign="right";
+            ctx.textBaseline="middle";
+            ctx.beginPath();
+            for (let y=0; y<=ny; y++) {
+                if (y==-yshift) continue;
+                ctx.moveTo(x0-0.2*gridSize, -(y+yshift)*2*gridSize+y0);
+                ctx.lineTo(x0+0.2*gridSize, -(y+yshift)*2*gridSize+y0);
+                let yy=Math.round((y+yshift)*ystep*1e9)/1e9;
+                ctx.fillText(yy, x0 - 0.5*gridSize, -(y+yshift)*2*gridSize+y0);
+            }
+            ctx.stroke();
+            //y Pfeilspitze:
+            ctx.beginPath();
+            ctx.moveTo(x0-0.2*gridSize, 0.5*gridSize);
+            ctx.lineTo(x0, 0);
+            ctx.lineTo(x0+0.2*gridSize, 0.5*gridSize);
+            ctx.stroke();
+
+            let nx=(xmax-xmin)/xstep;
+            let xshift = xmin/xstep;
+            ctx.textAlign="center";
+            ctx.textBaseline="top";
+            ctx.beginPath();
+            for (let x=0; x<=nx; x++) {
+                ctx.moveTo((x+xshift)*2*gridSize+x0, y0-0.2*gridSize);
+                ctx.lineTo((x+xshift)*2*gridSize+x0, y0+0.2*gridSize);
+                let xx=Math.round((x+xshift)*xstep*1e9)/1e9;
+                ctx.fillText(xx, (x+xshift)*2*gridSize+x0, y0 + 0.3*gridSize );
+            }
+            ctx.stroke();
+            //x Pfeilspitze:
+            ctx.beginPath();
+            ctx.moveTo(canvas.width-0.5*gridSize, y0-0.2*gridSize);
+            ctx.lineTo(canvas.width, y0);
+            ctx.lineTo(canvas.width-0.5*gridSize, y0+0.2*gridSize);
+            ctx.stroke();
+
+            // x,y Beschriftung
+            ctx.font=gridSize+"px Arial";
+            ctx.textAlign="right";
+            ctx.textBaseline="bottom";
+            let xname = document.getElementById("xname").value;
+            ctx.fillText(xname, canvas.width - 0.2*gridSize, y0-0.5*gridSize);
+            let yname = document.getElementById("yname").value;
+            ctx.textAlign="left";
+            ctx.fillText(yname, x0 + 0.5*gridSize, gridSize);
+        }
+
+        function isNearLine(line, x, y) {
+            const distance = Math.abs((line.end.y - line.start.y) * x - (line.end.x - line.start.x) * y + line.end.x * line.start.y - line.end.y * line.start.x) /
+                Math.sqrt((line.end.y - line.start.y) ** 2 + (line.end.x - line.start.x) ** 2);
+            return distance < 5;
+        }
+
+        function handleClick(event) {
+            const rect = canvas.getBoundingClientRect();
+            let x = Math.round((event.clientX - rect.left) / dx) * dx;
+            let y = Math.round((event.clientY - rect.top) / dx) * dx;
+            let xx=(x-x0)*xstep/2/gridSize;
+            let yy=(y0-y)*ystep/2/gridSize;
+            let mode=document.querySelector('input[name="mode"]:checked').value;
+            if (mode=="line") {
+                if (isSettingStart) {
+                    startPoint = { x: xx, y: yy };
+                    currentPoint = null;
+                    canvas.addEventListener("mousemove", handleMouseMove);
+                } else {
+                    elements.push({ start: startPoint, end: { x: xx, y: yy }, control: null, color });
+                    startPoint = null;
+                    currentPoint = null;
+                    canvas.removeEventListener("mousemove", handleMouseMove);
+                }
+                isSettingStart = !isSettingStart;
+                numpoints=0;
+            } else if (mode=="circle") {
+                if (isSettingStart) {
+                    startPoint = { x: xx, y: yy };
+                    currentPoint = null;
+                    canvas.addEventListener("mousemove", handleMouseMoveCircle);
+                } else {
+                    let dx=xx-startPoint.x, dy=yy-startPoint.y;
+                    elements.push({ center: startPoint, radius: Math.sqrt(dx*dx+dy*dy), color });
+                    startPoint = null;
+                    currentPoint = null;
+                    canvas.removeEventListener("mousemove", handleMouseMoveCircle);
+                }
+                isSettingStart = !isSettingStart;
+                numpoints=0;
+            } else if (mode=="point") {
+                elements.push({ point: {x: xx, y: yy}, color });
+                numpoints++;
+            } else if (mode=="text") {
+                let text=prompt("Text: ");
+                if (text!=null && text!="") {
+                    elements.push({ text: text, x: xx, y: yy, color });
+                }
+                numpoints=0;
+            }
+            document.getElementById("splinemode").disabled=numpoints<3;
+            drawGrid();
+        }
+
+        function handleMouseMove(event) {
+            if (!isSettingStart && startPoint) {
+                const rect = canvas.getBoundingClientRect();
+                let x = Math.round((event.clientX - rect.left) / dx) * dx;
+                let y = Math.round((event.clientY - rect.top) / dx) * dx;
+                let xx=(x-x0)*xstep/2/gridSize;
+                let yy=(y0-y)*ystep/2/gridSize;
+                currentPoint = { x: xx, y: yy };
+                drawGrid();
+                drawTemporaryLine();
+            }
+        }
+
+        function handleMouseMoveCircle(event) {
+            if (!isSettingStart && startPoint) {
+                const rect = canvas.getBoundingClientRect();
+                let x = Math.round((event.clientX - rect.left) / dx) * dx;
+                let y = Math.round((event.clientY - rect.top) / dx) * dx;
+                let xx=(x-x0)*xstep/2/gridSize;
+                let yy=(y0-y)*ystep/2/gridSize;
+                currentPoint = { x: xx, y: yy };
+                drawGrid();
+                drawTemporaryCircle();
+            }
+        }
+
+        function drawTemporaryLine() {
+            if (startPoint && currentPoint) {
+                ctx.strokeStyle = "purple";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                xy=transform(startPoint);
+                ctx.moveTo(xy[0], xy[1]);
+                xy=transform(currentPoint);
+                ctx.lineTo(xy[0], xy[1]);
+                ctx.stroke();
+            }
+        }
+
+        function drawTemporaryCircle() {
+            if (startPoint && currentPoint) {
+                ctx.strokeStyle = "purple";
+                ctx.lineWidth = 2;
+                center=transform(startPoint);
+                xy=transform(currentPoint);
+                let dx=xy[0]-center[0], dy=xy[1]-center[1];
+                let r=Math.sqrt(dx*dx+dy*dy); 
+                ctx.beginPath();
+                ctx.arc(center[0], center[1], r, 0, 2*Math.PI);
+                ctx.stroke();
+            }
+        }
+
+        function transform(point) {
+            return [point.x/xstep*2*gridSize+x0, -point.y/ystep*2*gridSize+y0];
+        }
+
+        function gradient(a, b) { 
+            return (b.y-a.y)/(b.x-a.x); 
+        }
+        // von https://www.geeksforgeeks.org/how-to-draw-smooth-curve-through-multiple-points-using-javascript/
+        function bzCurve(points, f, t) { 
+            if (typeof(f) == 'undefined') f = 0.3; 
+            if (typeof(t) == 'undefined') t = 0.6; 
+            ctx.beginPath(); 
+            ctx.moveTo(points[0].x, points[0].y); 
+            var m = 0; 
+            var dx1 = 0; 
+            var dy1 = 0; 
+            var preP = points[0]; 
+            for (var i = 1; i < points.length; i++) { 
+                var curP = points[i];
+                nexP = points[i + 1]; 
+                if (nexP) { 
+                    m = gradient(preP, nexP); 
+                    dx2 = (nexP.x - curP.x) * -f; 
+                    dy2 = dx2 * m * t; 
+                } else { 
+                    dx2 = 0; 
+                    dy2 = 0; 
+                } 
+                ctx.bezierCurveTo( 
+                    preP.x - dx1, preP.y - dy1, 
+                    curP.x + dx2, curP.y + dy2, 
+                    curP.x, curP.y 
+                ); 
+                dx1 = dx2; 
+                dy1 = dy2; 
+                preP = curP; 
+            } 
+            ctx.stroke(); 
+        } 
+
+        function drawLines() {
+            let xy;
+            for (let line of elements) {
+                if ("start" in line) {
+                    ctx.strokeStyle = line.color;
+                    ctx.beginPath();
+                    ctx.lineWidth = 2;
+                    xy = transform(line.start);
+                    ctx.moveTo(xy[0], xy[1]);
+                    if (line.control) {
+                        ctx.quadraticCurveTo(line.control.x, line.control.y, line.end.x, line.end.y);
+                    } else {
+                        xy = transform(line.end);
+                        ctx.lineTo(xy[0], xy[1]);
+                    }
+                    ctx.stroke();
+                } else if ("center" in line) {
+                    ctx.strokeStyle = line.color;
+                    ctx.beginPath();
+                    ctx.lineWidth = 2;
+                    xy = transform(line.center);
+                    ctx.ellipse(xy[0], xy[1], line.radius/xstep*2*gridSize, line.radius/xstep*2*gridSize, 0, 0, 2*Math.PI);
+                    ctx.stroke();
+                } else if ("text" in line) {
+                    ctx.fillStyle = line.color;
+                    ctx.font = gridSize*1.2+"px Arial";
+                    xy = transform(line);
+                    ctx.fillText(line.text, xy[0], xy[1]);
+                } else if ("point" in line) {
+                    ctx.strokeStyle = line.color;
+                    ctx.beginPath();
+                    ctx.lineWidth = 1;
+                    xy = transform(line.point);
+                    ctx.moveTo(xy[0] - 0.2*gridSize, xy[1] - 0.2*gridSize);
+                    ctx.lineTo(xy[0] + 0.2*gridSize, xy[1] + 0.2*gridSize);
+                    ctx.moveTo(xy[0] + 0.2*gridSize, xy[1] - 0.2*gridSize);
+                    ctx.lineTo(xy[0] - 0.2*gridSize, xy[1] + 0.2*gridSize);
+                    ctx.stroke();
+                } else if ("path" in line) {
+                    ctx.strokeStyle = line.color;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    let start=true;
+                    let points=[];
+                    
+                    for (let p of line.path) {
+                        let xy=transform(p);
+                        points.push({x:xy[0], y: xy[1]});
+                    }
+                    points.sort((p,q) => p.x-q.x);
+                    bzCurve(points,0.3,1);
+                }
+            }
+        }
+
+        function undoLastLine() {
+            if (elements.length > 0) {
+                elements.pop();
+                drawGrid();
+            }
+        }
+
+        function updateGrid() {
+            gridSize = 30; //parseInt(document.getElementById("gridSize").value);
+            let subGrid=parseInt(document.getElementById("subGrid").value);
+            dx=gridSize/subGrid;
+            xmin=parseFloat(document.getElementById("xstart").value);
+            xmax=parseFloat(document.getElementById("xend").value);
+            xstep=parseFloat(document.getElementById("xstep").value);
+            ymin=parseFloat(document.getElementById("ystart").value);
+            ymax=parseFloat(document.getElementById("yend").value);
+            ystep=parseFloat(document.getElementById("ystep").value);
+
+            if (xmin*xmax>0) if (xmin<0) xmax=0; else xmin=0;
+            if (ymin*ymax>0) if (ymin<0) ymax=0; else ymin=0;
+            xmin=Math.floor(xmin/xstep+1e-9)*xstep;
+            xmax=Math.ceil(xmax/xstep-1e-9)*xstep;
+            ymin=Math.floor(ymin/ystep+1e-9)*ystep;
+            ymax=Math.ceil(ymax/ystep-1e-9)*ystep;
+            document.getElementById("xstart").value=xmin;
+            document.getElementById("xend").value=xmax;
+            document.getElementById("ystart").value=ymin;
+            document.getElementById("yend").value=ymax;
+            
+            let h=((ymax-ymin)/ystep*2+2)*gridSize;
+            let w=((xmax-xmin)/xstep*2+2)*gridSize;
+            gridSize1 = (window.innerHeight-100)/((ymax-ymin)/ystep*2+2);
+            gridSize2 = (window.innerWidth-240)/((xmax-xmin)/xstep*2+2);
+            if (gridSize1<gridSize) gridSize=gridSize1;
+            if (gridSize2<gridSize) gridSize=gridSize2;
+            if (gridSize<1) gridSize=1;
+            dx=gridSize/subGrid;
+            ctx.canvas.width=((xmax-xmin)/xstep*2+2)*gridSize;
+            ctx.canvas.height=((ymax-ymin)/ystep*2+2)*gridSize;
+            x0=(Math.ceil(-xmin/xstep)*2+1)*gridSize; // x-Koordinate der y-Achse
+            y0=(Math.ceil(ymax/ystep)*2+1)*gridSize; // y-Koordinate der x-Achse
+            drawGrid();
+        }
+
+        function clearCanvas() {
+            let ok=confirm("Alles Löschen?");
+            if (!ok) return;
+            elements = [];
+            selectedLine = null;
+            controlPoint = null;
+            document.getElementById("linemode").checked=true;
+            startPoint=null;
+            currentPoint=null;
+            drawGrid();
+        }
+
+        canvas.addEventListener("click", handleClick);
+        window.addEventListener("resize", updateGrid);
+        updateGrid();
+        drawGrid();
+    </script>
+</body>
+</html>
