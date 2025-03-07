@@ -265,7 +265,9 @@
                     canvas.addEventListener("mousemove", handleMouseMoveCircle);
                 } else {
                     let dx=xx-startPoint.x, dy=yy-startPoint.y;
-                    elements.push({ center: startPoint, radius: Math.sqrt(dx*dx+dy*dy), color });
+                    dx/=xstep; dy/=ystep;
+                    let r=Math.sqrt(dx*dx+dy*dy);
+                    elements.push({ center: startPoint, rx: r*xstep, ry: r*ystep, color });
                     startPoint = null;
                     currentPoint = null;
                     canvas.removeEventListener("mousemove", handleMouseMoveCircle);
@@ -332,13 +334,14 @@
                 center=transform(startPoint);
                 xy=transform(currentPoint);
                 let dx=xy[0]-center[0], dy=xy[1]-center[1];
-                let r=Math.sqrt(dx*dx+dy*dy); 
+                let r=Math.sqrt(dx*dx+dy*dy);
                 ctx.beginPath();
                 ctx.arc(center[0], center[1], r, 0, 2*Math.PI);
                 ctx.stroke();
             }
         }
 
+        // user coordinates -> screen coordinates
         function transform(point) {
             return [point.x/xstep*2*gridSize+x0, -point.y/ystep*2*gridSize+y0];
         }
@@ -400,7 +403,7 @@
                     ctx.beginPath();
                     ctx.lineWidth = 2;
                     xy = transform(line.center);
-                    ctx.ellipse(xy[0], xy[1], line.radius/xstep*2*gridSize, line.radius/xstep*2*gridSize, 0, 0, 2*Math.PI);
+                    ctx.ellipse(xy[0], xy[1], line.rx/xstep*2*gridSize, line.ry/ystep*2*gridSize, 0, 0, 2*Math.PI);
                     ctx.stroke();
                 } else if ("text" in line) {
                     ctx.fillStyle = line.color;
