@@ -71,7 +71,7 @@
         </div>
     </div>
     <div class="graph">
-    <div style="text-align: center"><h1>Koordinatensystem</h1></div>
+    <div style="text-align: center" width="100%"><h2 style="cursor:text" contenteditable="true">Koordinatensystem</h2></div>
     <canvas id="drawingCanvas" width="600" height="400"></canvas>
     </div>
     
@@ -267,6 +267,7 @@
                     let dx=xx-startPoint.x, dy=yy-startPoint.y;
                     dx/=xstep; dy/=ystep;
                     let r=Math.sqrt(dx*dx+dy*dy);
+                    alert("r="+r+" rx "+r*xstep+" ry "+r*ystep+" dxy "+dx+" "+dy+" "+xstep+" "+ystep+" gs="+gridSize);
                     elements.push({ center: startPoint, rx: r*xstep, ry: r*ystep, color });
                     startPoint = null;
                     currentPoint = null;
@@ -335,6 +336,7 @@
                 xy=transform(currentPoint);
                 let dx=xy[0]-center[0], dy=xy[1]-center[1];
                 let r=Math.sqrt(dx*dx+dy*dy);
+                console.log(center+" "+xy+" "+dx+" "+dy); 
                 ctx.beginPath();
                 ctx.arc(center[0], center[1], r, 0, 2*Math.PI);
                 ctx.stroke();
@@ -403,6 +405,7 @@
                     ctx.beginPath();
                     ctx.lineWidth = 2;
                     xy = transform(line.center);
+                    console.log("rx ry: "+line.rx+" "+line.ry);
                     ctx.ellipse(xy[0], xy[1], line.rx/xstep*2*gridSize, line.ry/ystep*2*gridSize, 0, 0, 2*Math.PI);
                     ctx.stroke();
                 } else if ("text" in line) {
@@ -476,6 +479,7 @@
             dx=gridSize/subGrid;
             ctx.canvas.width=((xmax-xmin)/xstep*2+2)*gridSize;
             ctx.canvas.height=((ymax-ymin)/ystep*2+2)*gridSize;
+            document.querySelector("h2").parentElement.style.width=((xmax-xmin)/xstep*2+2)*gridSize+"px";
             x0=(Math.ceil(-xmin/xstep)*2+1)*gridSize; // x-Koordinate der y-Achse
             y0=(Math.ceil(ymax/ystep)*2+1)*gridSize; // y-Koordinate der x-Achse
             drawGrid();
