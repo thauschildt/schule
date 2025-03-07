@@ -32,29 +32,27 @@
 </head>
 <body>
     <div class="controls">
-        <b><input id="xname" style="font-weight:bold" type="text" size="2" value="x"/>-Achse</b><br>
+        <b><input id="xname" style="font-weight:bold" type="text" size="2" value="x" oninput="updateGrid()"/>-Achse</b><br>
         <label for="xstart">von:</label>
-        <input type="number" id="xstart" value="-10">
+        <input type="number" id="xstart" value="-10"  onblur="updateGrid()">
         <label for="xend">bis:</label>
-        <input type="number" id="xend" value="10">
+        <input type="number" id="xend" value="10" onblur="updateGrid()">
         <label for="xend">Schrittweite:</label>
-        <input type="number" id="xstep" value="1">
+        <input type="number" id="xstep" value="1" onblur="updateGrid()">
         <hr>
-        <b><input id="yname" style="font-weight:bold" type="text" size="2" value="y"/>-Achse</b><br>
+        <b><input id="yname" style="font-weight:bold" type="text" size="2" value="y" oninput="updateGrid()"/>-Achse</b><br>
         <label for="ystart">von:</label>
-        <input type="number" id="ystart" value="-5">
+        <input type="number" id="ystart" value="-5" onblur="updateGrid()">
         <label for="yend">bis:</label>
-        <input type="number" id="yend" value="10">
+        <input type="number" id="yend" value="10" onblur="updateGrid()">
         <label for="yend">Schrittweite:</label>
-        <input type="number" id="ystep" value="1">
+        <input type="number" id="ystep" value="1" onblur="updateGrid()">
         <hr>
         <!--<label for="gridSize">Rastergröße:</label>
         <input type="number" id="gridSize" value="20" min="5" max="100"> px
         <br>-->
         <label for="subGrid">Unterteilung:</label><br>
-        <input type="number" id="subGrid" value="2" min="1" max="10"> Pkt. pro Kästchen
-        <hr>
-        <div  style="text-align: center"><button onclick="updateGrid()" style="width: 10em">⟳ Aktualisieren</button></div>
+        <input type="number" id="subGrid" value="2" min="1" max="10" onblur="updateGrid()"> Pkt. pro Kästchen
         <hr>
         <input type="radio" name="mode" value="point" id="pointmode" onchange="changemode(event)"><label for="pointmode">Punkt</label><br>
         <input type="radio" name="mode" value="line" id="linemode" checked onchange="changemode(event)"><label for="linemode">Linie</label><br>
@@ -62,7 +60,13 @@
         <input type="radio" name="mode" value="text" id="textmode" onchange="changemode(event)"><label for="textmode">Text</label><br>
         <input type="radio" name="mode" value="circle" id="circlemode" onchange="changemode(event)"><label for="circlemode">Kreis</label><br>
         <hr>
-        Zeichenfarbe: <input type="color" id="color" value="#0000ff" onchange="changecolor()"/>
+        <table>
+        <tr><td>Zeichenfarbe:</td><td><input type="color" id="color" value="#0000ff" onchange="changesettings()"/></td></tr>
+        <tr><td>Liniendicke: </td><td> <input type="number" id="strokewidth" value="2" min=1 max=10 onchange="changesettings()"/></td></tr>
+        <tr><td>Linienstil:  </td><td> <select id="lstyle" onchange="changesettings()">
+            <option value="1" selected>⎯⎯⎯⎯</option><option value="2">- - - -</option><option value="3">······</option>
+        </td>select>
+        </td></tr></table>
         <hr>
         <div  style="text-align: center">
             <button onclick="clearCanvas()" style="color:red; width: 10em" >⎚ Löschen</button><br>
@@ -88,12 +92,17 @@
         let controlPoint = null;
         let lastmode = "linemode";
         let numpoints = 0;
+        let lwidth = 2;
+        let lstyle = 1; // durchgezogene Linie
+        let dash={1: [], 2: [8,4], 3: [2,4]};
         color = "#0000ff";
 
-        function changecolor() {
+        function changesettings() {
             color=document.getElementById("color").value;
+            lwidth=parseFloat(document.getElementById("strokewidth").value);
+            lstyle=parseFloat(document.getElementById("lstyle").value);
         }
-        
+
         function changemode(evt) {
             if (evt.target.id=="splinemode") {
                 let n=elements.length-1;
@@ -110,7 +119,7 @@
                 if (nn>n) nn=n;
                 let points=[];
                 for (let i=elements.length-1; i>=elements.length-nn; i--) points.push({x: elements[i].point.x, y: elements[i].point.y});
-                elements.push({path: points, color});
+                elements.push({path: points, color, width: lwidth, linestyle: lstyle});
                 numpoints=0;
                 drawLines();
             } else {
@@ -251,7 +260,7 @@
                     currentPoint = null;
                     canvas.addEventListener("mousemove", handleMouseMove);
                 } else {
-                    elements.push({ start: startPoint, end: { x: xx, y: yy }, control: null, color });
+                    elements.push({ start: startPoint, end: { x: xx, y: yy }, control: null, color, width: lwidth, linestyle: lstyle});
                     startPoint = null;
                     currentPoint = null;
                     canvas.removeEventListener("mousemove", handleMouseMove);
@@ -267,8 +276,7 @@
                     let dx=xx-startPoint.x, dy=yy-startPoint.y;
                     dx/=xstep; dy/=ystep;
                     let r=Math.sqrt(dx*dx+dy*dy);
-                    alert("r="+r+" rx "+r*xstep+" ry "+r*ystep+" dxy "+dx+" "+dy+" "+xstep+" "+ystep+" gs="+gridSize);
-                    elements.push({ center: startPoint, rx: r*xstep, ry: r*ystep, color });
+                    elements.push({ center: startPoint, rx: r*xstep, ry: r*ystep, color, width: lwidth, linestyle: lstyle});
                     startPoint = null;
                     currentPoint = null;
                     canvas.removeEventListener("mousemove", handleMouseMoveCircle);
@@ -276,12 +284,12 @@
                 isSettingStart = !isSettingStart;
                 numpoints=0;
             } else if (mode=="point") {
-                elements.push({ point: {x: xx, y: yy}, color });
+                elements.push({ point: {x: xx, y: yy}, color, width: lwidth});
                 numpoints++;
             } else if (mode=="text") {
                 let text=prompt("Text: ");
                 if (text!=null && text!="") {
-                    elements.push({ text: text, x: xx, y: yy, color });
+                    elements.push({ text: text, x: xx, y: yy, color, width: lwidth});
                 }
                 numpoints=0;
             }
@@ -316,9 +324,11 @@
         }
 
         function drawTemporaryLine() {
+            ctx.save();
             if (startPoint && currentPoint) {
+                ctx.setLineDash(dash[lstyle]);
                 ctx.strokeStyle = "purple";
-                ctx.lineWidth = 2;
+                ctx.lineWidth = lwidth;
                 ctx.beginPath();
                 xy=transform(startPoint);
                 ctx.moveTo(xy[0], xy[1]);
@@ -326,21 +336,24 @@
                 ctx.lineTo(xy[0], xy[1]);
                 ctx.stroke();
             }
+            ctx.restore();
         }
 
         function drawTemporaryCircle() {
+            ctx.save();
             if (startPoint && currentPoint) {
+                ctx.setLineDash(dash[lstyle]);
                 ctx.strokeStyle = "purple";
-                ctx.lineWidth = 2;
+                ctx.lineWidth = lwidth;
                 center=transform(startPoint);
                 xy=transform(currentPoint);
                 let dx=xy[0]-center[0], dy=xy[1]-center[1];
-                let r=Math.sqrt(dx*dx+dy*dy);
-                console.log(center+" "+xy+" "+dx+" "+dy); 
+                let r=Math.sqrt(dx*dx+dy*dy); 
                 ctx.beginPath();
                 ctx.arc(center[0], center[1], r, 0, 2*Math.PI);
                 ctx.stroke();
             }
+            ctx.restore();
         }
 
         // user coordinates -> screen coordinates
@@ -387,10 +400,12 @@
         function drawLines() {
             let xy;
             for (let line of elements) {
+                ctx.save();
                 if ("start" in line) {
                     ctx.strokeStyle = line.color;
                     ctx.beginPath();
-                    ctx.lineWidth = 2;
+                    ctx.lineWidth = line.width;
+                    ctx.setLineDash(dash[line.linestyle]);
                     xy = transform(line.start);
                     ctx.moveTo(xy[0], xy[1]);
                     if (line.control) {
@@ -402,10 +417,10 @@
                     ctx.stroke();
                 } else if ("center" in line) {
                     ctx.strokeStyle = line.color;
+                    ctx.setLineDash(dash[line.linestyle]);
                     ctx.beginPath();
-                    ctx.lineWidth = 2;
+                    ctx.lineWidth = line.width;
                     xy = transform(line.center);
-                    console.log("rx ry: "+line.rx+" "+line.ry);
                     ctx.ellipse(xy[0], xy[1], line.rx/xstep*2*gridSize, line.ry/ystep*2*gridSize, 0, 0, 2*Math.PI);
                     ctx.stroke();
                 } else if ("text" in line) {
@@ -416,7 +431,7 @@
                 } else if ("point" in line) {
                     ctx.strokeStyle = line.color;
                     ctx.beginPath();
-                    ctx.lineWidth = 1;
+                    ctx.lineWidth = line.width/2;
                     xy = transform(line.point);
                     ctx.moveTo(xy[0] - 0.2*gridSize, xy[1] - 0.2*gridSize);
                     ctx.lineTo(xy[0] + 0.2*gridSize, xy[1] + 0.2*gridSize);
@@ -425,7 +440,8 @@
                     ctx.stroke();
                 } else if ("path" in line) {
                     ctx.strokeStyle = line.color;
-                    ctx.lineWidth = 2;
+                    ctx.lineWidth = line.width;
+                    ctx.setLineDash(dash[line.linestyle]);
                     ctx.beginPath();
                     let start=true;
                     let points=[];
@@ -437,6 +453,7 @@
                     points.sort((p,q) => p.x-q.x);
                     bzCurve(points,0.3,1);
                 }
+                ctx.restore();
             }
         }
 
