@@ -529,20 +529,19 @@
           filename = d+"-"+nr;
         }
         filename = prompt("Dateiname: ", filename);
-	if (!filename) return;
-	if (localStorage.getItem(filename)) {
-		let yn = confirm(filename+" existiert schon. Überschreiben?");
-		if (!yn) return;
-	}
+        if (!filename) return;
+        if (localStorage.getItem(filename)) {
+            let yn = confirm(filename+" existiert schon. Überschreiben?");
+            if (!yn) return;
+    	}
         localStorage.setItem(filename, JSON.stringify({
 		"config": {
+            date: Date.now(),
 			gridSize: 30,
 	                axisStep: 50,
 			xmin, ymin, xmax, ymax, xstep, ystep,
 			color: "#0000ff"},
 		"drawing": elements}));
-	txt=localStorage.getItem(filename);
-	console.log(filename+": "+txt);
         updateFileList();
     }
 
@@ -550,7 +549,6 @@
         const savedData = localStorage.getItem(name);
         if (savedData) {
             data= JSON.parse(savedData);
-console.log(data);
             let conf = data.config;
 	    gridSize = conf.gridSize;
 	    document.getElementById("xstart").value = conf.xmin;
@@ -561,7 +559,6 @@ console.log(data);
 	    document.getElementById("ystep").value = conf.ystep || 1;
 	    document.getElementById("subGrid").value = conf.subGrid||2;
             elements = data.drawing;
-console.log(elements);
 	    updateGrid();
 	    drawLines();
         }
@@ -573,16 +570,18 @@ console.log(elements);
     }
 
     function updateFileList() {
-	let loadList = document.getElementById("filelist");
+	    let loadList = document.getElementById("filelist");
         loadList.innerHTML = "";
-        Object.keys(localStorage).forEach(name => {
+        let data = Object.keys(localStorage).map(name => [name, JSON.parse(localStorage.getItem(name)).config.date]);
+        data.sort((a,b) => b[1] - a[1]);
+        data.forEach( namedate => {
             const loadBtn = document.createElement("button");
-            loadBtn.textContent = name;
-            loadBtn.onclick = () => loadDrawing(name);
+            loadBtn.textContent = namedate[0];
+            loadBtn.onclick = () => loadDrawing(namedate[0]);
             
             const deleteBtn = document.createElement("button");
             deleteBtn.textContent = "Löschen";
-            deleteBtn.onclick = () => deleteDrawing(name);
+            deleteBtn.onclick = () => deleteDrawing(namedate[0]);
             
             loadList.appendChild(loadBtn);
             loadList.appendChild(deleteBtn);
