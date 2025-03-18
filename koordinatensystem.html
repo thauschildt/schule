@@ -73,6 +73,11 @@
             <button onclick="undoLastLine()" style="color: darkgreen; width: 10em" >⎌ Zurück</button><br>
             <button onclick="copy()" style="color: purple; width: 10em" >📋 Kopieren</button><br>
         </div>
+	<hr>
+	<div style="text-align: center">
+	        <button onclick="saveDrawing()">Speichern</button>
+		<div id="filelist"></div>
+	</div>
     </div>
     <div class="graph">
     <div style="text-align: center" width="100%"><h2 style="cursor:text" contenteditable="true">Koordinatensystem</h2></div>
@@ -514,10 +519,82 @@
             drawGrid();
         }
 
+
+    function saveDrawing() {
+	let d= new Date().toISOString().split("T")[0];
+	let filename = d;
+	nr = 0;
+	while (localStorage.getItem(filename)) {
+          ++nr;
+          filename = d+"-"+nr;
+        }
+        filename = prompt("Dateiname: ", filename);
+	if (!filename) return;
+	if (localStorage.getItem(filename)) {
+		let yn = confirm(filename+" existiert schon. Überschreiben?");
+		if (!yn) return;
+	}
+        localStorage.setItem(filename, JSON.stringify({
+		"config": {
+			gridSize: 30,
+	                axisStep: 50,
+			xmin, ymin, xmax, ymax, xstep, ystep,
+			color: "#0000ff"},
+		"drawing": elements}));
+	txt=localStorage.getItem(filename);
+	console.log(filename+": "+txt);
+        updateFileList();
+    }
+
+    function loadDrawing(name) {
+        const savedData = localStorage.getItem(name);
+        if (savedData) {
+            data= JSON.parse(savedData);
+console.log(data);
+            let conf = data.config;
+	    gridSize = conf.gridSize;
+	    document.getElementById("xstart").value = conf.xmin;
+	    document.getElementById("xend").value = conf.xmax;
+	    document.getElementById("xstep").value = conf.xstep || 1;
+	    document.getElementById("ystart").value = conf.xmin;
+	    document.getElementById("yend").value = conf.ymax;
+	    document.getElementById("ystep").value = conf.ystep || 1;
+	    document.getElementById("subGrid").value = conf.subGrid||2;
+            elements = data.drawing;
+console.log(elements);
+	    updateGrid();
+	    drawLines();
+        }
+    }
+
+    function deleteDrawing(name) {
+        localStorage.removeItem(name);
+        updateFileList();
+    }
+
+    function updateFileList() {
+	let loadList = document.getElementById("filelist");
+        loadList.innerHTML = "";
+        Object.keys(localStorage).forEach(name => {
+            const loadBtn = document.createElement("button");
+            loadBtn.textContent = name;
+            loadBtn.onclick = () => loadDrawing(name);
+            
+            const deleteBtn = document.createElement("button");
+            deleteBtn.textContent = "Löschen";
+            deleteBtn.onclick = () => deleteDrawing(name);
+            
+            loadList.appendChild(loadBtn);
+            loadList.appendChild(deleteBtn);
+            loadList.insertAdjacentHTML("beforeend","<br/>");
+        });
+    }
+
         canvas.addEventListener("click", handleClick);
         window.addEventListener("resize", updateGrid);
         updateGrid();
         drawGrid();
+	updateFileList();
     </script>
 </body>
 </html>
