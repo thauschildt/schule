@@ -80,7 +80,9 @@
 	</div>
     </div>
     <div class="graph">
-    <div style="text-align: center" width="100%"><h2 style="cursor:text" contenteditable="true">Koordinatensystem</h2></div>
+    <div style="text-align: center" width="100%"><h2 style="cursor:text">Koordinatensystem
+        <button id="2d3d" onclick="toggle2d3d(event)">2D</button></h2>
+    </div>
     <canvas id="drawingCanvas" width="600" height="400"></canvas>
     </div>
     
@@ -100,12 +102,21 @@
         let lwidth = 2;
         let lstyle = 1; // durchgezogene Linie
         let dash={1: [], 2: [8,4], 3: [2,4]};
+        dim="2D";
         color = "#0000ff";
 
         function changesettings() {
             color=document.getElementById("color").value;
             lwidth=parseFloat(document.getElementById("strokewidth").value);
             lstyle=parseFloat(document.getElementById("lstyle").value);
+        }
+
+        function toggle2d3d(evt) {
+            if (dim=="2D") dim="3D"; else dim="2D";
+            evt.target.innerHTML=dim;
+            for (var ele of ["xstart", "ystart", "xend", "yend", "xstep", "ystep", "xname", "yname", "subGrid"])
+                document.getElementById(ele).disabled=dim=="3D";
+            updateGrid();
         }
 
         function changemode(evt) {
@@ -184,6 +195,7 @@
         function drawAxes() {
             ctx.strokeStyle = "black";
             ctx.fillStyle = "black";
+            if (dim=="3D") ctx.strokeStyle="#444";
             ctx.lineWidth = 2;
             ctx.font=Math.floor(gridSize*0.7)+"px Arial";
             let centerX = canvas.width / 2;
@@ -196,6 +208,7 @@
             ctx.lineTo(canvas.width, y0);
             ctx.stroke();
 
+            // y-Achse (bzw. z-Achse 3D)
             let ny=(ymax-ymin)/ystep;
             let yshift = ymin/ystep;
             ctx.textAlign="right";
@@ -216,6 +229,7 @@
             ctx.lineTo(x0+0.2*gridSize, 0.5*gridSize);
             ctx.stroke();
 
+            //x-Achse (bzw. y-Achse 3D)
             let nx=(xmax-xmin)/xstep;
             let xshift = xmin/xstep;
             ctx.textAlign="center";
@@ -235,15 +249,38 @@
             ctx.lineTo(canvas.width-0.5*gridSize, y0+0.2*gridSize);
             ctx.stroke();
 
-            // x,y Beschriftung
+            // x-Achse (3D)
+            if (dim=="3D") {
+                sqrt2=Math.sqrt(2);
+                ctx.beginPath();
+                ctx.moveTo(7*gridSize*sqrt2+x0,-7*gridSize*sqrt2+y0);
+                ctx.lineTo(-7*gridSize*sqrt2+x0,7*gridSize*sqrt2+y0);
+                ctx.lineTo(-6.8*gridSize*sqrt2+x0,6.6*gridSize*sqrt2+y0);
+                ctx.moveTo(-7*gridSize*sqrt2+x0,7*gridSize*sqrt2+y0);
+                ctx.lineTo(-6.6*gridSize*sqrt2+x0,6.8*gridSize*sqrt2+y0);
+                for (let x=-9; x<=9; x++) {
+                    if (x==0) continue;
+                    ctx.moveTo((-x+0.21)*gridSize+x0, y0+(x+0.21)*gridSize);
+                    ctx.lineTo((-x-0.21)*gridSize+x0, y0+(x-0.21)*gridSize);
+                    if (x%2==0) ctx.fillText(x, (-x+0.3)*gridSize+x0, y0+(x+0.3)*gridSize);
+                }
+                ctx.stroke();
+            }
+
+            // x,y (z) Beschriftung
             ctx.font=gridSize+"px Arial";
             ctx.textAlign="right";
             ctx.textBaseline="bottom";
             let xname = document.getElementById("xname").value;
+            if (dim=="3D") xname="y";
             ctx.fillText(xname, canvas.width - 0.2*gridSize, y0-0.5*gridSize);
             let yname = document.getElementById("yname").value;
+            if (dim=="3D") yname="z";
             ctx.textAlign="left";
             ctx.fillText(yname, x0 + 0.5*gridSize, gridSize);
+            if (dim=="3D") {
+                ctx.fillText("x", x0 - 7.5*gridSize*sqrt2, y0 + 7.5*gridSize*sqrt2);
+            }
         }
 
         function isNearLine(line, x, y) {
