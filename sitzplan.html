@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sitzplan</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      font-family: Arial;
+    }
+
+    body {
+      padding: 10px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+
+    h1,
+    #instructions-container,
+    #controls-container {
+      flex-shrink: 0;
+      margin-bottom: 10px;
+    }
+
+    #instructions {
+      border: 1px dashed #ccc;
+      padding: 5px;
+      margin-top: 5px;
+      font-size: 0.9em;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+
+    #controls-container button {
+      font-size: 1.5em;
+      padding: 2px 8px;
+      line-height: 1;
+      vertical-align: middle;
+      margin-right: 5px;
+      cursor: pointer;
+      background: none;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    #controls-container button:hover {
+      background-color: #eee;
+    }
+
+    #canvas-container {
+      flex-grow: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: auto;
+      padding: 5px;
+      box-sizing: border-box;
+      min-height: 150px;
+      border: 1px solid #ddd;
+      position: relative;
+    }
+
+    canvas {
+      border: 2px solid black;
+      display: block;
+      cursor: default;
+      object-fit: contain;
+    }
+  </style>
+</head>
+
+<body>
+  <h1 contenteditable="true">Sitzplan</h1>
+  <div hidden id="instructions-container">
+    <button id="toggle-instructions" title="Anleitung anzeigen/verstecken"
+      aria-label="Anleitung anzeigen/verstecken">ℹ️</button>
+    <div id="instructions" style="display: none;">
+      <strong>Anleitung:</strong><br>
+      - Klicken & Ziehen zum Verschieben.<br>
+      - Klicken zum Auswählen.<br>
+      - Shift + Klick zur Mehrfachauswahl.<br>
+      - Kreis am Griff zum Drehen (Griff bleibt bis Auswahländerung stabil).<br>
+      - Rechteck aufziehen zur Auswahl.<br>
+      - Doppelklick auf Tisch für Namen.<br>
+      - Raumgröße unten rechts änderbar (Tischgröße konstant).<br>
+      - Speichern/Laden mit 💾 / 📂 (passt Größe an Fenster an).<br>
+      - Ansicht spiegeln mit 🔄.
+    </div>
+  </div>
+  <div id="controls-container">
+    <button id="export-button" title="Sitzplan speichern" aria-label="Sitzplan speichern">💾</button>
+    <button id="import-button" title="Sitzplan laden" aria-label="Sitzplan laden">📂</button>
+    <input type="file" id="import-file" accept=".json" style="display: none;">
+    <button id="rotate-view-button" title="Ansicht spiegeln" aria-label="Ansicht spiegeln">🔄</button>
+  </div>
+  <div id="canvas-container">
+    <canvas id="classroom-canvas">Ihr Browser unterstützt kein Canvas.</canvas>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+
+      // --- Konstanten ---
+      const TABLE_WIDTH_M = 1.25; // Metrische Breite (Referenz)
+      const TABLE_HEIGHT_M = 0.60; // Metrische Höhe (Referenz)
+      const TABLE_ASPECT_RATIO = TABLE_WIDTH_M / TABLE_HEIGHT_M;
+      const INITIAL_ROOM_WIDTH_M = 8; const INITIAL_ROOM_HEIGHT_M = 7.5; // Nur für initiale Anordnung
+      const NUM_ROWS = 4; const TABLES_PER_ROW_SIDE = 2; // Für initiale Anordnung
+      const ROTATION_SNAP_ANGLE = 15; const DEG_TO_RAD = Math.PI / 180;
+      const HANDLE_LINE_LENGTH = 15; const HANDLE_CIRCLE_RADIUS = 5; const HANDLE_GRAB_RADIUS = 10;
+      const RESIZE_HANDLE_SIZE = 15;
+      const GROUP_HANDLE_CORNER_TOLERANCE = 0.1; // Für Gleichheitsprüfung bei Eckenfindung
+      const LOAD_PADDING_FACTOR = 1.1; // Faktor für Rand beim Laden (1.1 = 10% Rand)
+
+      // --- Globale Variablen ---
+      let canvas, ctx;
+      let currentRoomWidthPx, currentRoomHeightPx; // Aktuelle Canvas Größe
+      let pixelsPerMeter = 50; // Wird bei setup/load angepasst
+      let fixedTableWidthPx, fixedTableHeightPx; // Aktuelle Pixelgrößen (basierend auf pixelsPerMeter)
+      let tables = []; // { id, lx, ly, rotation, name1, name2, isSelected }
+      let tableIdCounter = 0; let selectedElements = new Set();
+      let isDragging = false; let isRotating = false; let isSelectingRect = false; let isResizing = false;
+      let shiftKeyPressed = false; let dragStartCanvasPos = { x: 0, y: 0 };
+      let elementStartLogicalPos = new Map(); // Speichert {lx, ly} beim Drag/Rotate Start
+      let groupCenterLogical = { x: 0, y: 0 }; // Logisches Zentrum der Gruppe (für Rotation)
+      let rotationFixedHandleTableId = null; // ID des Anker-Tisches
+      let rotationFixedHandleCornerName = null; // Name der Anker-Ecke
+      let rotationStartAngle = 0; let elementStartLogicalRotation = new Map(); // Rotation beim Start
+      let rectStartCanvasPos = { x: 0, y: 0 }; let rectCurrentCanvasPos = { x: 0, y: 0 };
+      let resizeStartPos = { x: 0, y: 0 }; let resizeStartDims = { w: 0, h: 0 };
+      let lastMousePos = { x: 0, y: 0 };
+
+      // --- DOM Elemente ---
+      const canvasContainer = document.getElementById('canvas-container');
+      canvas = document.getElementById('classroom-canvas');
+      const exportButton = document.getElementById('export-button');
+      const importButton = document.getElementById('import-button');
+      const importFileElement = document.getElementById('import-file');
+      const instructionsElement = document.getElementById('instructions');
+      const toggleInstructionsButton = document.getElementById('toggle-instructions');
+      const rotateViewButton = document.getElementById('rotate-view-button');
+
+      // --- Initialisierung ---
+      function init() {
+        if (!canvas || !canvasContainer || !exportButton) { console.error("Elements missing"); return; }
+        ctx = canvas.getContext('2d'); if (!ctx) { alert("No context"); return; }
+        initialLayoutAndScaling(); // Initiale Größe, Skalierung und Tischanordnung
+        setupEventListeners();
+        requestRedraw();
+      }
+
+      // --- Layout, Skalierung, Größenanpassung ---
+      function initialLayoutAndScaling() {
+        const container = canvasContainer; const pad = 10;
+        const availW = container.clientWidth - pad;
+        const availH = container.clientHeight - pad;
+        const initialLayoutWidthM = INITIAL_ROOM_WIDTH_M; const initialLayoutHeightM = INITIAL_ROOM_HEIGHT_M;
+        const scaleX = availW / initialLayoutWidthM; const scaleY = availH / initialLayoutHeightM;
+        pixelsPerMeter = Math.max(10, Math.min(scaleX, scaleY));
+        updateFixedTableSizes();
+        currentRoomWidthPx = initialLayoutWidthM * pixelsPerMeter; currentRoomHeightPx = initialLayoutHeightM * pixelsPerMeter;
+        canvas.width = currentRoomWidthPx; canvas.height = currentRoomHeightPx;
+        createInitialTablesCentered(initialLayoutWidthM, initialLayoutHeightM);
+      }
+
+      function updateFixedTableSizes() {
+        fixedTableWidthPx = TABLE_WIDTH_M * pixelsPerMeter;
+        fixedTableHeightPx = TABLE_HEIGHT_M * pixelsPerMeter;
+      }
+
+      function createInitialTablesCentered(layoutWidthM, layoutHeightM) {
+        tables = []; tableIdCounter = 0; selectedElements.clear(); updateHandleAnchor();
+        const gap_x = 0.1 * fixedTableWidthPx;
+        const space_x = currentRoomWidthPx - 2 * TABLES_PER_ROW_SIDE * fixedTableWidthPx - 2 * (TABLES_PER_ROW_SIDE - 1) * gap_x;
+        const space_lr = Math.max(0.25 * fixedTableWidthPx, 10);
+        const aisle_width = currentRoomWidthPx - 2 * space_lr - 2 * TABLES_PER_ROW_SIDE * fixedTableWidthPx
+          - 2 * (TABLES_PER_ROW_SIDE - 1) * gap_x;
+        const vSpacing = (currentRoomHeightPx - NUM_ROWS * fixedTableHeightPx) / (NUM_ROWS + 1);
+        for (let r = 0; r < NUM_ROWS; r++) {
+          const y = vSpacing + r * (fixedTableHeightPx + vSpacing) + 0.5 * fixedTableHeightPx;
+          for (let c = 0; c < 2 * TABLES_PER_ROW_SIDE; c++) {
+            let x = space_lr + c * (fixedTableWidthPx + gap_x) + 0.5 * fixedTableWidthPx;
+            if (c >= TABLES_PER_ROW_SIDE) x += aisle_width - gap_x;
+            createTableData(x, y);
+          }
+        }
+      }
+
+      // Erstellt ein Tisch-Datenobjekt und fügt es zur 'tables'-Liste hinzu.
+      function createTableData(lx, ly, rotation = 0, name1 = '', name2 = '', isSelected = false) {
+        const newTable = {
+          id: tableIdCounter++,
+          lx: lx, // Logische X-Koordinate (Pixel, oben links)
+          ly: ly, // Logische Y-Koordinate (Pixel, oben links)
+          rotation: rotation, // Rotation in Grad
+          name1: name1,
+          name2: name2,
+          isSelected: isSelected,
+        };
+        tables.push(newTable);
+        return newTable;
+      }
+
+
+      function resizeCanvas(newWidth, newHeight) {
+        currentRoomWidthPx = Math.max(150, Math.floor(newWidth)); currentRoomHeightPx = Math.max(120, Math.floor(newHeight));
+        canvas.width = currentRoomWidthPx; canvas.height = currentRoomHeightPx;
+        requestRedraw();
+      }
+
+      // --- Event Listener & Handler ---
+      function setupEventListeners() {
+        canvas.addEventListener('mousedown', handleMouseDown);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        canvas.addEventListener('dblclick', handleDoubleClick);
+        document.addEventListener('keydown', handleKeyDown);
+        document.addEventListener('keyup', handleKeyUp);
+        exportButton.addEventListener('click', handleExport);
+        importButton.addEventListener('click', () => importFileElement.click());
+        importFileElement.addEventListener('change', handleImport);
+        toggleInstructionsButton.addEventListener('click', toggleInstructions);
+        rotateViewButton.addEventListener('click', handleRotateViewClick);
+      }
+      function toggleInstructions() {
+        instructionsElement.style.display = (instructionsElement.style.display !== 'none') ? 'none' : 'block';
+      }
+      function handleRotateViewClick() {
+        tables.forEach(function (t) {
+          t.lx = currentRoomWidthPx - t.lx;
+          t.ly = currentRoomHeightPx - t.ly;
+          t.rotation = (t.rotation + 180) % 360;
+        });
+        requestRedraw();
+      }
+      function handleKeyDown(e) {
+        if (e.key === 'Shift') {
+          shiftKeyPressed = true;
+        } else if (e.key === 'Delete' || e.key === 'Del') { // Prüfe auf Entf/Delete
+          if (selectedElements.size > 0) {
+            tables = tables.filter(table => !selectedElements.has(table.id));
+            deselectAll();
+            requestRedraw();
+            e.preventDefault();
+          }
+        }
+      }
+      function handleKeyUp(e) { if (e.key === 'Shift') shiftKeyPressed = false; }
+      function handleMouseDown(e) {
+        const mousePos = getMousePos(canvas, e); lastMousePos = mousePos;
+        if (isPointOnResizeHandle(mousePos)) {
+          isResizing = true; resizeStartPos = mousePos; resizeStartDims = { w: canvas.width, h: canvas.height };
+          canvas.style.cursor = 'nwse-resize'; return;
+        }
+        const handleHit = getHandleHit(mousePos);
+        if (handleHit && selectedElements.size > 0) { startRotate(handleHit, mousePos); return; }
+        const tableHit = getTableAtPos(mousePos);
+        if (tableHit) {
+          dragStartCanvasPos = mousePos;
+          if (shiftKeyPressed) { toggleSelection(tableHit.id); }
+          else {
+            if (!selectedElements.has(tableHit.id)) {
+              deselectAll(); selectElement(tableHit.id);
+            }
+            if (selectedElements.size > 0) { startDrag(mousePos); }
+          }
+          requestRedraw(); return;
+        }
+        if (!shiftKeyPressed) { deselectAll(); }
+        isSelectingRect = true; rectStartCanvasPos = mousePos; rectCurrentCanvasPos = mousePos; requestRedraw();
+      }
+      function handleMouseMove(e) {
+        const mousePos = getMousePos(canvas, e); lastMousePos = mousePos;
+        if (isResizing) { doResize(mousePos); }
+        else if (isDragging) { doDrag(mousePos); requestRedraw(); }
+        else if (isRotating) { doRotate(mousePos); requestRedraw(); }
+        else if (isSelectingRect) { rectCurrentCanvasPos = mousePos; requestRedraw(); }
+        else { updateCursor(mousePos); }
+      }
+      function handleMouseUp(e) {
+        let needsRedraw = false; if (isResizing) { isResizing = false; needsRedraw = true; }
+        if (isDragging) { endDrag(); needsRedraw = true; }
+        if (isRotating) { endRotate(); needsRedraw = true; }
+        if (isSelectingRect) { endRectSelect(); isSelectingRect = false; needsRedraw = true; }
+        if (needsRedraw) requestRedraw(); updateCursor(getMousePos(canvas, e));
+      }
+
+      function handleDoubleClick(e) {
+        const mousePos = getMousePos(canvas, e); const tableHit = getTableAtPos(mousePos);
+        if (tableHit) {
+          const c1 = tableHit.name1 || '', c2 = tableHit.name2 || ''; let cc = (c1 && c2) ? `${c1}, ${c2}` : (c1 || c2 || '');
+          const input = prompt(`Namen für Tisch ${tableHit.id}:`, cc);
+          if (input !== null) {
+            const tI = input.trim(); let n1 = '', n2 = '';
+            if (tI.includes(',')) {
+              const p = tI.split(','); n1 = (p[0] || '').trim(); n2 = (p.slice(1).join(',') || '').trim();
+            } else if (tI.includes(' ')) {
+              const p = tI.split(/ (.*)/s); n1 = (p[0] || '').trim(); n2 = (p[1] || '').trim();
+            } else { n1 = tI; }
+            tableHit.name1 = n1; tableHit.name2 = n2; requestRedraw();
+          }
+        }
+      }
+
+      // --- Aktionen ---
+      function isPointOnResizeHandle(pos) {
+        const x = canvas.width - RESIZE_HANDLE_SIZE, y = canvas.height - RESIZE_HANDLE_SIZE;
+        return pos.x >= x && pos.x <= canvas.width && pos.y >= y && pos.y <= canvas.height;
+      }
+      function doResize(mousePos) {
+        if (!isResizing) return; const dx = mousePos.x - resizeStartPos.x; const dy = mousePos.y - resizeStartPos.y;
+        let newW = Math.max(150, resizeStartDims.w + dx); let newH = Math.max(120, resizeStartDims.h + dy); resizeCanvas(newW, newH);
+      }
+      function startDrag(mousePos) {
+        isDragging = true; dragStartCanvasPos = mousePos; elementStartLogicalPos.clear();
+        selectedElements.forEach(id => {
+          const t = tables.find(tbl => tbl.id === id);
+          if (t) elementStartLogicalPos.set(id, { lx: t.lx, ly: t.ly });
+        });
+      }
+      function doDrag(mousePos) {
+        if (!isDragging) return; let dx = mousePos.x - dragStartCanvasPos.x; let dy = mousePos.y - dragStartCanvasPos.y;
+        selectedElements.forEach(id => { const t = tables.find(tbl => tbl.id === id); const sp = elementStartLogicalPos.get(id);
+          if (t && sp) { t.lx = sp.lx + dx; t.ly = sp.ly + dy; } 
+        });
+      }
+      function endDrag() { isDragging = false; elementStartLogicalPos.clear(); }
+
+      // --- Rotation ---
+      function startRotate(handleInfo, mousePos) {
+        if (rotationFixedHandleTableId === null || rotationFixedHandleCornerName === null) {
+          console.error("Rotation start: Kein Anker gesetzt. Update..."); updateHandleAnchor();
+          if (rotationFixedHandleTableId === null || rotationFixedHandleCornerName === null) {
+            console.error("-> Update fehlgeschlagen. Abbruch."); return;
+          }
+          console.warn("Anker erst bei Rotationsstart gesetzt.");
+        }
+        isRotating = true;
+        elementStartLogicalRotation.clear(); elementStartLogicalPos.clear();
+        const selectedTableData = Array.from(selectedElements).map(id => tables.find(t => t.id === id)).filter(t => t);
+        if (selectedTableData.length === 0) { isRotating = false; return; } let sumLx = 0, sumLy = 0;
+        selectedTableData.forEach(t => {
+          sumLx += t.lx; sumLy += t.ly;
+          elementStartLogicalRotation.set(t.id, t.rotation);
+          elementStartLogicalPos.set(t.id, { lx: t.lx, ly: t.ly });
+        });
+        groupCenterLogical = { x: sumLx / selectedTableData.length, y: sumLy / selectedTableData.length };
+        rotationStartAngle = getAngle(groupCenterLogical.x, groupCenterLogical.y, mousePos.x, mousePos.y);
+      }
+      function doRotate(mousePos) {
+        if (!isRotating) return;
+        const currentAngle = getAngle(groupCenterLogical.x, groupCenterLogical.y, mousePos.x, mousePos.y);
+        let angleDiff = currentAngle - rotationStartAngle; const snappedAngleDiff = snapToAngle(angleDiff, ROTATION_SNAP_ANGLE);
+        selectedElements.forEach(id => {
+          const table = tables.find(t => t.id === id);
+          const startRot = elementStartLogicalRotation.get(id);
+          const startPos = elementStartLogicalPos.get(id);
+          if (!table || typeof startRot !== 'number' || !startPos) return;
+          let newRot = (startRot + snappedAngleDiff);
+          newRot = (newRot % 360 + 360) % 360;
+          newRot = snapToAngle(newRot, ROTATION_SNAP_ANGLE);
+          let delta = newRot - startRot;
+          if (delta > 180) delta -= 360;
+          if (delta < -180) delta += 360;
+          table.rotation = newRot;
+          const startCX = startPos.lx;
+          const startCY = startPos.ly;
+          const relX = startCX - groupCenterLogical.x;
+          const relY = startCY - groupCenterLogical.y;
+          const actualAngleRad = delta * DEG_TO_RAD; const cosA = Math.cos(actualAngleRad); const sinA = Math.sin(actualAngleRad);
+          const rotRelX = relX * cosA - relY * sinA; const rotRelY = relX * sinA + relY * cosA;
+          const newCX = groupCenterLogical.x + rotRelX;
+          const newCY = groupCenterLogical.y + rotRelY;
+          table.lx = newCX; table.ly = newCY;
+        });
+      }
+      function endRotate() {
+        if (!isRotating) return; isRotating = false; elementStartLogicalRotation.clear(); elementStartLogicalPos.clear();
+      }
+
+      // --- Auswahl & Anker Management ---
+      function selectElement(id) {
+        if (typeof id === 'number') selectedElements.add(id);
+        const t = tables.find(tbl => tbl.id === id); if (t) t.isSelected = true; updateHandleAnchor();
+      }
+      function deselectElement(id) {
+        if (typeof id === 'number') selectedElements.delete(id); const t = tables.find(tbl => tbl.id === id);
+        if (t) t.isSelected = false; if (selectedElements.size > 0) { updateHandleAnchor(); } else { deselectAll(); }
+      }
+      function toggleSelection(id) { if (selectedElements.has(id)) { deselectElement(id); } else { selectElement(id); } }
+      function deselectAll() {
+        selectedElements.forEach(id => { const t = tables.find(tbl => tbl.id === id); if (t) t.isSelected = false; });
+        selectedElements.clear(); rotationFixedHandleTableId = null; rotationFixedHandleCornerName = null;
+      }
+      function endRectSelect() {
+        const logStart = rectStartCanvasPos;
+        const logCurrent = rectCurrentCanvasPos;
+        const l = Math.min(logStart.x, logCurrent.x); const t = Math.min(logStart.y, logCurrent.y);
+        const r = Math.max(logStart.x, logCurrent.x); const b = Math.max(logStart.y, logCurrent.y);
+        if (Math.abs(logStart.x - logCurrent.x) < 5 && Math.abs(logStart.y - logCurrent.y) < 5) return;
+        let selectionChanged = false;
+        tables.forEach(table => {
+          const cx = table.lx;
+          const cy = table.ly;
+          if (cx >= l && cx <= r && cy >= t && cy <= b) {
+            if (!selectedElements.has(table.id)) { selectedElements.add(table.id); table.isSelected = true; selectionChanged = true; }
+          }
+        });
+        if (selectionChanged) { updateHandleAnchor(); }
+      }
+
+      // Bestimmt und speichert den Ankerpunkt (Tisch + Ecke) für den Anker
+      function updateHandleAnchor() {
+        if (selectedElements.size === 0) { rotationFixedHandleTableId = null; rotationFixedHandleCornerName = null; return; }
+        let bestScore = -Infinity; let bestTableForHandle = null; let bestCornerNameForHandle = null;
+        selectedElements.forEach(id => {
+          const table = tables.find(t => t.id === id); if (!table) return;
+          ['top-left', 'top-right', 'bottom-left', 'bottom-right'].forEach(cornerName => {
+            const cornerPos = getCornerPosition(table, cornerName); if (!cornerPos) return;
+            const score = cornerPos.x - cornerPos.y; // obere rechte Ecke
+            if (score > bestScore) { bestScore = score; bestTableForHandle = table; bestCornerNameForHandle = cornerName; }
+          });
+        });
+        if (bestTableForHandle && bestCornerNameForHandle) {
+          if (rotationFixedHandleTableId !== bestTableForHandle.id || rotationFixedHandleCornerName !== bestCornerNameForHandle) {
+            rotationFixedHandleTableId = bestTableForHandle.id; rotationFixedHandleCornerName = bestCornerNameForHandle;
+          }
+        } else { rotationFixedHandleTableId = null; rotationFixedHandleCornerName = null; }
+      }
+
+      // --- Speichern & Laden ---
+      function handleExport() {
+        const titleElement = document.querySelector('h1'); // Annahme: Es gibt nur ein h1
+        const currentTitle = titleElement ? titleElement.textContent : "Sitzplan"; // Fallback
+        let fn = prompt("Dateiname:", currentTitle.toLowerCase());
+        if (fn === null) return;
+        fn = fn.trim() || "sitzplan";
+        const layoutData = {
+          // Bestehende Daten
+          tableWidthM: TABLE_WIDTH_M,
+          tableHeightM: TABLE_HEIGHT_M,
+          roomSize: [currentRoomWidthPx / pixelsPerMeter, currentRoomHeightPx / pixelsPerMeter],
+          tables: tables.map(t => ({ // ... Tischdaten ...
+            id: t.id, lx: Math.round(t.lx / pixelsPerMeter * 1000) / 1000, ly: Math.round(t.ly / pixelsPerMeter * 1000) / 1000,
+            rotation: t.rotation, name1: t.name1, name2: t.name2
+          })),
+          title: currentTitle
+        };
+        const json = JSON.stringify(layoutData, null, 2); // 2 spaces indentation
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url;
+        a.download = fn.endsWith('.json') ? fn : `${fn}.json`; a.click(); URL.revokeObjectURL(url); a.remove();
+        console.log(`Exported as ${a.download}`);
+      }
+
+      function handleImport(event) {
+        const file = event.target.files[0]; if (!file) return; const reader = new FileReader();
+        reader.onload = e => {
+          try { const data = JSON.parse(e.target.result); loadLayoutFromJson(data); }
+          catch (err) { console.error(err); alert(`Fehler beim Laden: ${err.message}`); } finally { importFileElement.value = null; }
+        };
+        reader.onerror = e => { console.error(e); alert("Fehler beim Lesen der Datei."); importFileElement.value = null; };
+        reader.readAsText(file);
+      }
+
+      function loadLayoutFromJson(data) {
+        // Grundstruktur und Metrik prüfen
+        if (!data || !Array.isArray(data.tables) || typeof data.tableWidthM !== 'number' || typeof data.tableHeightM !== 'number') {
+          throw new Error("Ungültige Daten: Metrik oder Tischdaten fehlen.");
+        }
+        if (data.tableWidthM <= 0 || data.tableHeightM <= 0) {
+          throw new Error("Ungültige Tischmetrik in Datei.");
+        }
+
+        // Aktuellen Zustand zurücksetzen
+        tables = [];
+        selectedElements.clear();
+        tableIdCounter = 0;
+        let maxId = -1;
+
+        // Geladene Tischdaten verarbeiten (IDs validieren etc.)
+        const loadedTablesData = data.tables.map(td => {
+          const id = parseInt(td.id);
+          maxId = Math.max(maxId, isNaN(id) ? -1 : id); // Finde höchste ID
+          return {
+            id: isNaN(id) ? -1 : id, // Platzhalter für ungültige ID
+            lx: parseFloat(td.lx || 0),
+            ly: parseFloat(td.ly || 0),
+            rotation: parseFloat(td.rotation || 0),
+            name1: td.name1 || '',
+            name2: td.name2 || ''
+          };
+        }).filter(t => t.id !== -1); // Nur Tische mit gültiger ID behalten
+
+        tableIdCounter = maxId + 1; // Nächste ID setzen
+
+        // Titel setzen
+        const titleElement = document.querySelector('h1');
+        if (titleElement && data.title !== undefined) {
+          titleElement.textContent = data.title; // Setze geladenen Titel
+        } else if (titleElement) {
+          titleElement.textContent = "Sitzplan"; // Fallback, wenn kein Titel geladen wurde
+        }
+
+        if (loadedTablesData.length === 0) {
+          console.warn("Keine gültigen Tischdaten in der Datei gefunden.");
+          // Reset auf Standardgröße, aber ohne Tische zu erstellen
+          initialLayoutAndScaling();
+          requestRedraw();
+          return;
+        }
+
+        // Verfügbaren Platz im Container bestimmen
+        const container = canvasContainer;
+        const pad = 10; // Container Padding
+        const availW = container.clientWidth - pad;
+        const availH = container.clientHeight - pad;
+
+        // Optimalen Maßstab (Pixel pro logische Einheit/Meter) berechnen
+        pixelsPerMeter = 1; currentRoomWidthPx = data.roomSize[0]; currentRoomHeightPx = data.roomSize[1];
+        const scaleFitX = availW / currentRoomWidthPx;
+        const scaleFitY = availH / currentRoomHeightPx;
+        pixelsPerMeter = Math.max(5, Math.min(scaleFitX, scaleFitY)); // Neuer Maßstab, mindestens 5px/m
+        fixedTableWidthPx = data.tableWidthM * pixelsPerMeter;
+        fixedTableHeightPx = data.tableHeightM * pixelsPerMeter;
+
+        // Canvas Größe auf verfügbaren Platz setzen
+        currentRoomWidthPx *= pixelsPerMeter;
+        currentRoomHeightPx *= pixelsPerMeter;
+        canvas.width = currentRoomWidthPx;
+        canvas.height = currentRoomHeightPx;
+
+        // Tischobjekte erstellen und Koordinaten transformieren, um das Layout zu zentrieren
+        // Berechne die Größe des (gepaddeten) Layouts in Pixeln
+        const layoutWidthPx = currentRoomWidthPx * pixelsPerMeter;
+        const layoutHeightPx = currentRoomHeightPx * pixelsPerMeter;
+
+        loadedTablesData.forEach(td => {
+          // Transformiere die geladene logische Koordinate (lx, ly, die Meter waren) in die neue Pixelkoordinate
+          const finalLx = td.lx * pixelsPerMeter;
+          const finalLy = td.ly * pixelsPerMeter;
+
+          // Erstelle das Tischobjekt im 'tables' Array mit den neuen Pixelkoordinaten
+          createTableData(
+            finalLx,
+            finalLy,
+            td.rotation,
+            td.name1,
+            td.name2,
+            false // isSelected = false beim Laden
+          );
+        });
+
+        // Abschließende Schritte
+        updateHandleAnchor(); // Anker zurücksetzen (da Auswahl leer ist)
+        requestRedraw(); // Neu zeichnen
+      }
+
+      function getCornerPosition(table, cornerName = 'top-right') {
+        if (!table) return null;
+        const cx = table.lx; const cy = table.ly; const w = fixedTableWidthPx; const h = fixedTableHeightPx;
+        const angleRad = table.rotation * DEG_TO_RAD; const cosA = Math.cos(angleRad); const sinA = Math.sin(angleRad);
+        let relX, relY;
+        switch (cornerName) {
+          case 'top-left': relX = -w / 2; relY = -h / 2; break;
+          case 'bottom-left': relX = -w / 2; relY = h / 2; break;
+          case 'bottom-right': relX = w / 2; relY = h / 2; break;
+          default: relX = w / 2; relY = -h / 2;
+        }
+        const rotRelX = relX * cosA - relY * sinA; const rotRelY = relX * sinA + relY * cosA;
+        return { x: cx + rotRelX, y: cy + rotRelY };
+      }
+
+      function getCurrentHandleInfo() {
+        if (rotationFixedHandleTableId === null || rotationFixedHandleCornerName === null) { return null; } // Kein Anker
+        const anchorTable = tables.find(t => t.id === rotationFixedHandleTableId);
+        if (!anchorTable) {
+          console.warn(`Anchor Table ${rotationFixedHandleTableId} not found!`); return null;
+        }
+        const handleOriginPos = getCornerPosition(anchorTable, rotationFixedHandleCornerName);
+        if (!handleOriginPos) return null;
+        const anchorTableCenterVisual = { x: anchorTable.lx, y: anchorTable.ly };
+        // Winkel vom Tischzentrum zur Ecke:
+        const handleAngleDeg = getAngle(anchorTableCenterVisual.x, anchorTableCenterVisual.y, handleOriginPos.x, handleOriginPos.y);
+        const handleAngleRad = handleAngleDeg * DEG_TO_RAD;
+        const handleTipOffsetX = HANDLE_LINE_LENGTH * Math.cos(handleAngleRad);
+        const handleTipOffsetY = HANDLE_LINE_LENGTH * Math.sin(handleAngleRad);
+        return { tableId: rotationFixedHandleTableId,
+          visualPos: { x: handleOriginPos.x + handleTipOffsetX, y: handleOriginPos.y + handleTipOffsetY },
+          originPos: handleOriginPos,
+        };
+      }
+
+      function snapToAngle(angle, step) { return Math.round(angle / step) * step; }
+      function getAngle(cx, cy, ex, ey) {
+        const dy = ey - cy; const dx = ex - cx; if (dx === 0 && dy === 0) return 0;
+        let theta = Math.atan2(dy, dx) * (180 / Math.PI); return (theta < 0) ? theta + 360 : theta;
+      }
+      function debounce(func, wait) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => func.apply(this, a), wait); }; }
+
+      // --- Hilfsfunktionen für Koordinaten / Hit Detection ---
+      function getMousePos(el, ev) { const r = el.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; }
+      function getTableAtPos(pos) {
+        for (let i = tables.length - 1; i >= 0; i--) {
+          const t = tables[i];
+          ctx.save();
+          ctx.translate(t.lx, t.ly); ctx.rotate(t.rotation * DEG_TO_RAD); ctx.beginPath();
+          ctx.rect(-fixedTableWidthPx / 2, -fixedTableHeightPx / 2, fixedTableWidthPx, fixedTableHeightPx);
+          const hit = ctx.isPointInPath(pos.x, pos.y); ctx.restore();
+          if (hit) return t;
+        }
+        return null;
+      }
+      function getHandleHit(pos) {
+        const info = getCurrentHandleInfo(); if (!info) return null;
+        const dx = pos.x - info.visualPos.x; const dy = pos.y - info.visualPos.y;
+        return (dx * dx + dy * dy <= HANDLE_GRAB_RADIUS * HANDLE_GRAB_RADIUS) ? info : null;
+      }
+      function updateCursor(mousePos) {
+        if (isDragging) { canvas.style.cursor = 'grabbing'; return; }
+        if (isRotating) { canvas.style.cursor = 'crosshair'; return; }
+        if (isResizing) { canvas.style.cursor = 'nwse-resize'; return; }
+        if (isPointOnResizeHandle(mousePos)) { canvas.style.cursor = 'nwse-resize'; return; }
+        if (selectedElements.size > 0 && getHandleHit(mousePos)) { canvas.style.cursor = 'crosshair'; return; }
+        if (getTableAtPos(mousePos)) { canvas.style.cursor = 'grab'; return; }
+        canvas.style.cursor = 'default';
+      }
+
+      // --- Zeichnen ---
+      let redrawRequested = false;
+      function requestRedraw() {
+        if (!redrawRequested) { redrawRequested = true; requestAnimationFrame(() => { drawClassroom(); redrawRequested = false; }); }
+      }
+      function drawClassroom() {
+        if (!ctx) return; ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#c0c0c0';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = "#a0a0a0"; ctx.setLineDash([2, 2]);
+        for (let x = 0; x <= currentRoomWidthPx; x += pixelsPerMeter) {
+          ctx.moveTo(x, 0); ctx.lineTo(x, currentRoomHeightPx);
+        }
+        for (let y = 0; y <= currentRoomHeightPx; y += pixelsPerMeter) {
+          ctx.moveTo(0, y); ctx.lineTo(currentRoomWidthPx, y);
+        }
+        ctx.stroke();
+        ctx.restore();
+        tables.forEach(drawTable);
+        drawSelectionRect();
+        drawRotationHandle(); drawResizeHandle();
+      }
+      function drawTable(table) {
+        if (!table) return;
+        ctx.save(); ctx.translate(table.lx, table.ly); ctx.rotate(table.rotation * DEG_TO_RAD); ctx.beginPath();
+        ctx.rect(-fixedTableWidthPx / 2, -fixedTableHeightPx / 2, fixedTableWidthPx, fixedTableHeightPx);
+        ctx.fillStyle = table.isSelected ? '#8de' : 'white'; ctx.strokeStyle = table.isSelected ? 'blue' : '#8b4513';
+        ctx.lineWidth = table.isSelected ? 2 : 1;
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+        if (table.name1 || table.name2) {
+          const cx = table.lx;
+          const cy = table.ly;
+          const ar = table.rotation * DEG_TO_RAD;
+          const cosA = Math.cos(ar); const sinA = Math.sin(ar);
+          ctx.save(); ctx.fillStyle = '#333'; ctx.font = '15px sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          const offX1 = -fixedTableWidthPx / 4, offY1 = 0;
+          const rotOffX1 = offX1 * cosA - offY1 * sinA; const rotOffY1 = offX1 * sinA + offY1 * cosA;
+          if (table.name1) ctx.fillText(table.name1, cx + rotOffX1, cy + rotOffY1, fixedTableWidthPx / 2 - 4);
+          const offX2 = fixedTableWidthPx / 4, offY2 = 0; const rotOffX2 = offX2 * cosA - offY2 * sinA;
+          const rotOffY2 = offX2 * sinA + offY2 * cosA;
+          if (table.name2) ctx.fillText(table.name2, cx + rotOffX2, cy + rotOffY2, fixedTableWidthPx / 2 - 4);
+          ctx.restore();
+        }
+      }
+      function drawSelectionRect() {
+        if (!isSelectingRect) return;
+        const r1x = rectStartCanvasPos.x, r1y = rectStartCanvasPos.y;
+        const r2x = rectCurrentCanvasPos.x, r2y = rectCurrentCanvasPos.y;
+        const l = Math.min(r1x, r2x), t = Math.min(r1y, r2y);
+        const w = Math.abs(r1x - r2x), h = Math.abs(r1y - r2y);
+        ctx.save(); ctx.strokeStyle = 'blue'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+        ctx.strokeRect(l, t, w, h);
+        ctx.fillStyle = 'rgba(0,0,255,0.05)'; ctx.fillRect(l, t, w, h);
+        ctx.restore();
+      }
+      function drawRotationHandle() {
+        const info = getCurrentHandleInfo(); if (!info) return; const o = info.originPos; const t = info.visualPos;
+        ctx.save();
+        ctx.strokeStyle = 'black'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(t.x, t.y); ctx.stroke();
+        ctx.beginPath(); ctx.arc(t.x, t.y, HANDLE_CIRCLE_RADIUS, 0, 2 * Math.PI); ctx.fillStyle = 'white'; ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+      function drawResizeHandle() {
+        const x = canvas.width - RESIZE_HANDLE_SIZE, y = canvas.height - RESIZE_HANDLE_SIZE; ctx.save();
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(x, canvas.height);
+        ctx.lineTo(canvas.width, canvas.height);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke(); ctx.restore();
+      }
+      init();
+    });
+  </script>
+</body>
+
+</html>
