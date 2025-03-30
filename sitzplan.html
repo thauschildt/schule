@@ -63,7 +63,7 @@
       padding: 5px;
       box-sizing: border-box;
       min-height: 150px;
-      border: 1px solid #ddd;
+      /*border: 1px solid #ddd;*/
       position: relative;
     }
 
@@ -108,9 +108,7 @@
     document.addEventListener('DOMContentLoaded', () => {
 
       // --- Konstanten ---
-      const TABLE_WIDTH_M = 1.25; // Metrische Breite (Referenz)
-      const TABLE_HEIGHT_M = 0.60; // Metrische Höhe (Referenz)
-      const TABLE_ASPECT_RATIO = TABLE_WIDTH_M / TABLE_HEIGHT_M;
+      const tableTypes = [{name: "Doppel", w:1.25, h: 0.60, num: 2}, {name: "Einzel", "w": 0.80, "h":0.60, num: 1}];
       const INITIAL_ROOM_WIDTH_M = 8; const INITIAL_ROOM_HEIGHT_M = 7.5; // Nur für initiale Anordnung
       const NUM_ROWS = 4; const TABLES_PER_ROW_SIDE = 2; // Für initiale Anordnung
       const ROTATION_SNAP_ANGLE = 15; const DEG_TO_RAD = Math.PI / 180;
@@ -123,8 +121,7 @@
       let canvas, ctx;
       let currentRoomWidthPx, currentRoomHeightPx; // Aktuelle Canvas Größe
       let pixelsPerMeter = 50; // Wird bei setup/load angepasst
-      let fixedTableWidthPx, fixedTableHeightPx; // Aktuelle Pixelgrößen (basierend auf pixelsPerMeter)
-      let tables = []; // { id, lx, ly, rotation, name1, name2, isSelected }
+      let tables = []; // { id, lx, ly, rotation, names, isSelected }
       let tableIdCounter = 0; let selectedElements = new Set();
       let isDragging = false; let isRotating = false; let isSelectingRect = false; let isResizing = false;
       let shiftKeyPressed = false; let dragStartCanvasPos = { x: 0, y: 0 };
@@ -164,44 +161,47 @@
         const initialLayoutWidthM = INITIAL_ROOM_WIDTH_M; const initialLayoutHeightM = INITIAL_ROOM_HEIGHT_M;
         const scaleX = availW / initialLayoutWidthM; const scaleY = availH / initialLayoutHeightM;
         pixelsPerMeter = Math.max(10, Math.min(scaleX, scaleY));
-        updateFixedTableSizes();
+        updateTableSizes();
         currentRoomWidthPx = initialLayoutWidthM * pixelsPerMeter; currentRoomHeightPx = initialLayoutHeightM * pixelsPerMeter;
         canvas.width = currentRoomWidthPx; canvas.height = currentRoomHeightPx;
         createInitialTablesCentered(initialLayoutWidthM, initialLayoutHeightM);
       }
 
-      function updateFixedTableSizes() {
-        fixedTableWidthPx = TABLE_WIDTH_M * pixelsPerMeter;
-        fixedTableHeightPx = TABLE_HEIGHT_M * pixelsPerMeter;
+      function updateTableSizes() {
+        tableTypes.forEach( (t) => {
+          t.wPx = t.w *pixelsPerMeter;
+          t.hPx = t.h *pixelsPerMeter;
+        });
       }
 
       function createInitialTablesCentered(layoutWidthM, layoutHeightM) {
         tables = []; tableIdCounter = 0; selectedElements.clear(); updateHandleAnchor();
-        const gap_x = 0.1 * fixedTableWidthPx;
-        const space_x = currentRoomWidthPx - 2 * TABLES_PER_ROW_SIDE * fixedTableWidthPx - 2 * (TABLES_PER_ROW_SIDE - 1) * gap_x;
-        const space_lr = Math.max(0.25 * fixedTableWidthPx, 10);
-        const aisle_width = currentRoomWidthPx - 2 * space_lr - 2 * TABLES_PER_ROW_SIDE * fixedTableWidthPx
+        let doppel = tableTypes.filter( t => t.name=="Doppel")[0];
+        const gap_x = 0.1 * doppel.wPx;
+        const space_x = currentRoomWidthPx - 2 * TABLES_PER_ROW_SIDE * doppel.wPx - 2 * (TABLES_PER_ROW_SIDE - 1) * gap_x;
+        const space_lr = Math.max(0.25 * doppel.wPx, 10);
+        const aisle_width = currentRoomWidthPx - 2 * space_lr - 2 * TABLES_PER_ROW_SIDE * doppel.wPx
           - 2 * (TABLES_PER_ROW_SIDE - 1) * gap_x;
-        const vSpacing = (currentRoomHeightPx - NUM_ROWS * fixedTableHeightPx) / (NUM_ROWS + 1);
+        const vSpacing = (currentRoomHeightPx - NUM_ROWS * doppel.hPx) / (NUM_ROWS + 1);
         for (let r = 0; r < NUM_ROWS; r++) {
-          const y = vSpacing + r * (fixedTableHeightPx + vSpacing) + 0.5 * fixedTableHeightPx;
+          const y = vSpacing + r * (doppel.hPx + vSpacing) + 0.5 * doppel.hPx;
           for (let c = 0; c < 2 * TABLES_PER_ROW_SIDE; c++) {
-            let x = space_lr + c * (fixedTableWidthPx + gap_x) + 0.5 * fixedTableWidthPx;
+            let x = space_lr + c * (doppel.wPx + gap_x) + 0.5 * doppel.wPx;
             if (c >= TABLES_PER_ROW_SIDE) x += aisle_width - gap_x;
-            createTableData(x, y);
+            createTableData(x, y, doppel);
           }
         }
       }
 
       // Erstellt ein Tisch-Datenobjekt und fügt es zur 'tables'-Liste hinzu.
-      function createTableData(lx, ly, rotation = 0, name1 = '', name2 = '', isSelected = false) {
+      function createTableData(lx, ly, type, rotation = 0, names = [], isSelected = false) {
         const newTable = {
           id: tableIdCounter++,
           lx: lx, // Logische X-Koordinate (Pixel, oben links)
           ly: ly, // Logische Y-Koordinate (Pixel, oben links)
+          type: type,
           rotation: rotation, // Rotation in Grad
-          name1: name1,
-          name2: name2,
+          names: names,
           isSelected: isSelected,
         };
         tables.push(newTable);
@@ -250,6 +250,30 @@
             requestRedraw();
             e.preventDefault();
           }
+        } else if (e.key === 'Plus' || e.key === '+') { // Neuer Tisch
+          let nr = prompt("Art des Tisches?\n1: Einzel\n2: Doppel");
+          let type;
+          if (nr==1) type=tableTypes.find(t => t.name=="Einzel");
+          else if (nr==2) type=tableTypes.find(t => t.name=="Doppel");
+          else return;
+          deselectAll();
+          let newTable = createTableData(currentRoomWidthPx/2, currentRoomHeightPx/2, type, 0, [], false);
+          selectElement(newTable.id);
+          requestRedraw();
+        } else if (e.key === 'ArrowUp' ||e.key === 'ArrowDown' ||e.key === 'ArrowLeft' ||e.key === 'ArrowRight') {
+          if (selectedElements.size==0) return;
+          let dx=0, dy=0;
+          if (e.key == "ArrowUp") dy=shiftKeyPressed? -0.5 : -0.1;
+          if (e.key == "ArrowDown") dy=shiftKeyPressed? 0.5 : 0.1;
+          if (e.key == "ArrowLeft") dx=shiftKeyPressed? -0.5 : -0.1;
+          if (e.key == "ArrowRight") dx=shiftKeyPressed? 0.5 : 0.1;
+          tables.forEach( t => {
+            if (selectedElements.has(t.id)) {
+              t.lx+=dx*pixelsPerMeter;
+              t.ly+=dy*pixelsPerMeter;
+            }
+          })
+          requestRedraw();
         }
       }
       function handleKeyUp(e) { if (e.key === 'Shift') shiftKeyPressed = false; }
@@ -295,16 +319,24 @@
       function handleDoubleClick(e) {
         const mousePos = getMousePos(canvas, e); const tableHit = getTableAtPos(mousePos);
         if (tableHit) {
-          const c1 = tableHit.name1 || '', c2 = tableHit.name2 || ''; let cc = (c1 && c2) ? `${c1}, ${c2}` : (c1 || c2 || '');
-          const input = prompt(`Namen für Tisch ${tableHit.id}:`, cc);
+          let num = tableHit.type.num;
+          let current = tableHit.names.join(", ");
+          let pr = "";
+          if (num>1) {
+            pr = "ABCDEFGHIJK".substring(0,num).split("");
+            pr = "("+pr.join(" ")+" oder "+pr.join(", ")+")";
+          }
+          const input = prompt("Namen eingeben"+pr, current);
           if (input !== null) {
-            const tI = input.trim(); let n1 = '', n2 = '';
-            if (tI.includes(',')) {
-              const p = tI.split(','); n1 = (p[0] || '').trim(); n2 = (p.slice(1).join(',') || '').trim();
-            } else if (tI.includes(' ')) {
-              const p = tI.split(/ (.*)/s); n1 = (p[0] || '').trim(); n2 = (p[1] || '').trim();
-            } else { n1 = tI; }
-            tableHit.name1 = n1; tableHit.name2 = n2; requestRedraw();
+            const tI = input.trim(); let names = [].fill("", num);
+            if (tI.includes(',') && num>1) {
+              const p = tI.split(',');
+              for (let i=0; i<p.length && i<num; i++) names[i] = p[i].trim();
+            } else if (tI.includes(' ') && num>1) {
+              const p = tI.split(/\s+/s);
+              for (let i=0; i<p.length && i<num; i++) names[i] = p[i].trim();
+            } else { names[0] = tI; }
+            tableHit.names = names; requestRedraw();
           }
         }
       }
@@ -444,12 +476,12 @@
         fn = fn.trim() || "sitzplan";
         const layoutData = {
           // Bestehende Daten
-          tableWidthM: TABLE_WIDTH_M,
-          tableHeightM: TABLE_HEIGHT_M,
+          tableTypes: tableTypes,
           roomSize: [currentRoomWidthPx / pixelsPerMeter, currentRoomHeightPx / pixelsPerMeter],
           tables: tables.map(t => ({ // ... Tischdaten ...
             id: t.id, lx: Math.round(t.lx / pixelsPerMeter * 1000) / 1000, ly: Math.round(t.ly / pixelsPerMeter * 1000) / 1000,
-            rotation: t.rotation, name1: t.name1, name2: t.name2
+            type: t.type.name,
+            rotation: t.rotation, names: t.names,
           })),
           title: currentTitle
         };
@@ -472,11 +504,8 @@
 
       function loadLayoutFromJson(data) {
         // Grundstruktur und Metrik prüfen
-        if (!data || !Array.isArray(data.tables) || typeof data.tableWidthM !== 'number' || typeof data.tableHeightM !== 'number') {
+        if (!data || !Array.isArray(data.tables)) {
           throw new Error("Ungültige Daten: Metrik oder Tischdaten fehlen.");
-        }
-        if (data.tableWidthM <= 0 || data.tableHeightM <= 0) {
-          throw new Error("Ungültige Tischmetrik in Datei.");
         }
 
         // Aktuellen Zustand zurücksetzen
@@ -493,12 +522,11 @@
             id: isNaN(id) ? -1 : id, // Platzhalter für ungültige ID
             lx: parseFloat(td.lx || 0),
             ly: parseFloat(td.ly || 0),
+            type: td.type || "",
             rotation: parseFloat(td.rotation || 0),
-            name1: td.name1 || '',
-            name2: td.name2 || ''
+            names: td.names
           };
         }).filter(t => t.id !== -1); // Nur Tische mit gültiger ID behalten
-
         tableIdCounter = maxId + 1; // Nächste ID setzen
 
         // Titel setzen
@@ -528,9 +556,19 @@
         const scaleFitX = availW / currentRoomWidthPx;
         const scaleFitY = availH / currentRoomHeightPx;
         pixelsPerMeter = Math.max(5, Math.min(scaleFitX, scaleFitY)); // Neuer Maßstab, mindestens 5px/m
-        fixedTableWidthPx = data.tableWidthM * pixelsPerMeter;
-        fixedTableHeightPx = data.tableHeightM * pixelsPerMeter;
 
+        // Tischtypen einlesen und Pixelgrößen berechnen:
+        if (typeof data.tableTypes !== undefined) {
+          tableTypes.slice(0, tableTypes.length);
+          tableTypes.push(...data.tableTypes);
+          tableTypes.forEach( t => {
+            t.wPx = t.w*pixelsPerMeter;
+            t.hPx = t.h*pixelsPerMeter;
+          });
+        }
+        if (tableTypes.length==0)
+          tableTypes.push({name: "Doppel", w: 120, h: 60, num: 2});
+        
         // Canvas Größe auf verfügbaren Platz setzen
         currentRoomWidthPx *= pixelsPerMeter;
         currentRoomHeightPx *= pixelsPerMeter;
@@ -551,21 +589,22 @@
           createTableData(
             finalLx,
             finalLy,
+            tableTypes.find( tt => tt.name == td.type) || tableTypes[0],
             td.rotation,
-            td.name1,
-            td.name2,
+            td.names,
             false // isSelected = false beim Laden
           );
         });
 
         // Abschließende Schritte
         updateHandleAnchor(); // Anker zurücksetzen (da Auswahl leer ist)
+        updateTableSizes(); // Pixelgrößen neu berechnen
         requestRedraw(); // Neu zeichnen
       }
 
       function getCornerPosition(table, cornerName = 'top-right') {
         if (!table) return null;
-        const cx = table.lx; const cy = table.ly; const w = fixedTableWidthPx; const h = fixedTableHeightPx;
+        const cx = table.lx; const cy = table.ly; const w = table.type.wPx; const h = table.type.hPx;
         const angleRad = table.rotation * DEG_TO_RAD; const cosA = Math.cos(angleRad); const sinA = Math.sin(angleRad);
         let relX, relY;
         switch (cornerName) {
@@ -612,7 +651,7 @@
           const t = tables[i];
           ctx.save();
           ctx.translate(t.lx, t.ly); ctx.rotate(t.rotation * DEG_TO_RAD); ctx.beginPath();
-          ctx.rect(-fixedTableWidthPx / 2, -fixedTableHeightPx / 2, fixedTableWidthPx, fixedTableHeightPx);
+          ctx.rect(-t.type.wPx / 2, -t.type.hPx / 2, t.type.wPx, t.type.hPx);
           const hit = ctx.isPointInPath(pos.x, pos.y); ctx.restore();
           if (hit) return t;
         }
@@ -659,24 +698,26 @@
       function drawTable(table) {
         if (!table) return;
         ctx.save(); ctx.translate(table.lx, table.ly); ctx.rotate(table.rotation * DEG_TO_RAD); ctx.beginPath();
-        ctx.rect(-fixedTableWidthPx / 2, -fixedTableHeightPx / 2, fixedTableWidthPx, fixedTableHeightPx);
+        ctx.rect(-table.type.wPx / 2, -table.type.hPx / 2, table.type.wPx, table.type.hPx);
         ctx.fillStyle = table.isSelected ? '#8de' : 'white'; ctx.strokeStyle = table.isSelected ? 'blue' : '#8b4513';
         ctx.lineWidth = table.isSelected ? 2 : 1;
         ctx.fill(); ctx.stroke();
         ctx.restore();
-        if (table.name1 || table.name2) {
+        if (table.names.length>0) {
           const cx = table.lx;
           const cy = table.ly;
           const ar = table.rotation * DEG_TO_RAD;
           const cosA = Math.cos(ar); const sinA = Math.sin(ar);
           ctx.save(); ctx.fillStyle = '#333'; ctx.font = '15px sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          const offX1 = -fixedTableWidthPx / 4, offY1 = 0;
-          const rotOffX1 = offX1 * cosA - offY1 * sinA; const rotOffY1 = offX1 * sinA + offY1 * cosA;
-          if (table.name1) ctx.fillText(table.name1, cx + rotOffX1, cy + rotOffY1, fixedTableWidthPx / 2 - 4);
-          const offX2 = fixedTableWidthPx / 4, offY2 = 0; const rotOffX2 = offX2 * cosA - offY2 * sinA;
-          const rotOffY2 = offX2 * sinA + offY2 * cosA;
-          if (table.name2) ctx.fillText(table.name2, cx + rotOffX2, cy + rotOffY2, fixedTableWidthPx / 2 - 4);
+          for (let i=0; i<table.type.num; i++) {
+            const offX = table.type.wPx * (-0.5 + (i+0.5)/table.type.num), offY = 0;
+            const rotOffX = offX * cosA - offY * sinA;
+            const rotOffY = offX * sinA + offY * cosA;
+            if (table.names.length>i)
+              ctx.fillText(table.names[i], cx + rotOffX, cy + rotOffY,
+                table.rotation%180==0? table.type.wPx / table.type.num - 4 : table.type.wPx);
+          }
           ctx.restore();
         }
       }
@@ -694,7 +735,9 @@
       function drawRotationHandle() {
         const info = getCurrentHandleInfo(); if (!info) return; const o = info.originPos; const t = info.visualPos;
         ctx.save();
-        ctx.strokeStyle = 'black'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(t.x, t.y); ctx.stroke();
+        ctx.strokeStyle = 'black'; ctx.lineWidth = 1; ctx.setLineDash([1,2]);
+        ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(t.x, t.y); ctx.stroke();
+        ctx.setLineDash([]);
         ctx.beginPath(); ctx.arc(t.x, t.y, HANDLE_CIRCLE_RADIUS, 0, 2 * Math.PI); ctx.fillStyle = 'white'; ctx.fill(); ctx.stroke();
         ctx.restore();
       }
