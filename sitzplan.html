@@ -155,6 +155,7 @@
 
       // --- Layout, Skalierung, Größenanpassung ---
       function initialLayoutAndScaling() {
+        //resizeHandler();
         const container = canvasContainer; const pad = 10;
         const availW = container.clientWidth - pad;
         const availH = container.clientHeight - pad;
@@ -164,7 +165,7 @@
         updateTableSizes();
         currentRoomWidthPx = initialLayoutWidthM * pixelsPerMeter; currentRoomHeightPx = initialLayoutHeightM * pixelsPerMeter;
         canvas.width = currentRoomWidthPx; canvas.height = currentRoomHeightPx;
-        createInitialTablesCentered(initialLayoutWidthM, initialLayoutHeightM);
+        createInitialTablesCentered(currentRoomWidthPx/pixelsPerMeter, currentRoomHeightPx/pixelsPerMeter);
       }
 
       function updateTableSizes() {
@@ -228,7 +229,26 @@
         importFileElement.addEventListener('change', handleImport);
         toggleInstructionsButton.addEventListener('click', toggleInstructions);
         rotateViewButton.addEventListener('click', handleRotateViewClick);
+        window.addEventListener("resize", resizeHandler);
       }
+
+      function resizeHandler() {
+        const container = canvasContainer; const pad = 10;
+        const roomWidth = currentRoomWidthPx/pixelsPerMeter;
+        const roomHeight = currentRoomHeightPx/pixelsPerMeter;
+        const availW = container.clientWidth - pad;
+        const availH = container.clientHeight - pad;
+        const scaleX = availW / roomWidth; const scaleY = availH / roomHeight;
+        let factor = 1.0/pixelsPerMeter;
+        pixelsPerMeter = Math.max(10, Math.min(scaleX, scaleY));
+        factor *= pixelsPerMeter;
+        updateTableSizes();
+        currentRoomWidthPx = roomWidth * pixelsPerMeter; currentRoomHeightPx = roomHeight * pixelsPerMeter;
+        canvas.width = currentRoomWidthPx; canvas.height = currentRoomHeightPx;
+        tables.forEach( t=> {t.lx *= factor; t.ly *= factor });
+        requestRedraw();
+      }
+
       function toggleInstructions() {
         instructionsElement.style.display = (instructionsElement.style.display !== 'none') ? 'none' : 'block';
       }
@@ -309,7 +329,7 @@
         else { updateCursor(mousePos); }
       }
       function handleMouseUp(e) {
-        let needsRedraw = false; if (isResizing) { isResizing = false; needsRedraw = true; }
+        let needsRedraw = false; if (isResizing) { isResizing = false; needsRedraw = true; resizeHandler(); }
         if (isDragging) { endDrag(); needsRedraw = true; }
         if (isRotating) { endRotate(); needsRedraw = true; }
         if (isSelectingRect) { endRectSelect(); isSelectingRect = false; needsRedraw = true; }
@@ -568,7 +588,7 @@
         }
         if (tableTypes.length==0)
           tableTypes.push({name: "Doppel", w: 120, h: 60, num: 2});
-        
+
         // Canvas Größe auf verfügbaren Platz setzen
         currentRoomWidthPx *= pixelsPerMeter;
         currentRoomHeightPx *= pixelsPerMeter;
