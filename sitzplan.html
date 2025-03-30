@@ -67,6 +67,10 @@
       position: relative;
     }
 
+    #tableSizes {
+      border-collapse: collapse;
+    }
+
     canvas {
       border: 2px solid black;
       display: block;
@@ -99,16 +103,30 @@
     <button id="import-button" title="Sitzplan laden" aria-label="Sitzplan laden">📂</button>
     <input type="file" id="import-file" accept=".json" style="display: none;">
     <button id="rotate-view-button" title="Ansicht spiegeln" aria-label="Ansicht spiegeln">🔄</button>
+    <button id="settings-button" title="Einstellungen" aria-label="Einstellungen">⚙</button>
   </div>
   <div id="canvas-container">
     <canvas id="classroom-canvas">Ihr Browser unterstützt kein Canvas.</canvas>
+  </div>
+  <div style="display:none" id="settings-container">
+    <h4>Raumgröße</h4>
+    <label for="roomWidth">Breite:</label> <input id="roomWidth" type="number" value="0" min="300" max="2000" step="10"/> cm<br>
+    <label for="roomHeight">Länge:</label> <input id="roomHeight" type="number" value="0" min="300" max="2000" step="10"/> cm<br>
+    <h4>Tischgrößen</h4>
+    <i>Achtung - eine Änderung der vorhandenen Tische kann zu Fehlern führen!</i>
+    <table id="tableSizes"></table>
+    <h4>Farben</h4>
+    <label for="bgcolor">Hintergrund:</label> <input id="bgcolor" type="color" value=""/><br>
+    <label for="tablecolor">Tische:</label> <input id="tablecolor" type="color" value=""/><br>
+    <hr>
+    <button id="close-settings-button">Schließen</button>
   </div>
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
 
       // --- Konstanten ---
-      const tableTypes = [{name: "Doppel", w:1.25, h: 0.60, num: 2}, {name: "Einzel", "w": 0.80, "h":0.60, num: 1}];
+      const tableTypes = [{name: "Einzel", "w": 0.80, "h":0.60, num: 1}, {name: "Doppel", w:1.25, h: 0.60, num: 2}];
       const INITIAL_ROOM_WIDTH_M = 8; const INITIAL_ROOM_HEIGHT_M = 7.5; // Nur für initiale Anordnung
       const NUM_ROWS = 4; const TABLES_PER_ROW_SIDE = 2; // Für initiale Anordnung
       const ROTATION_SNAP_ANGLE = 15; const DEG_TO_RAD = Math.PI / 180;
@@ -133,9 +151,11 @@
       let rectStartCanvasPos = { x: 0, y: 0 }; let rectCurrentCanvasPos = { x: 0, y: 0 };
       let resizeStartPos = { x: 0, y: 0 }; let resizeStartDims = { w: 0, h: 0 };
       let lastMousePos = { x: 0, y: 0 };
+      let bgColor="#c0c0c0", tableColor="#ffffff";
 
       // --- DOM Elemente ---
       const canvasContainer = document.getElementById('canvas-container');
+      const settingsContainer = document.getElementById('settings-container');
       canvas = document.getElementById('classroom-canvas');
       const exportButton = document.getElementById('export-button');
       const importButton = document.getElementById('import-button');
@@ -143,6 +163,8 @@
       const instructionsElement = document.getElementById('instructions');
       const toggleInstructionsButton = document.getElementById('toggle-instructions');
       const rotateViewButton = document.getElementById('rotate-view-button');
+      const settingsButton = document.getElementById('settings-button');
+      
 
       // --- Initialisierung ---
       function init() {
@@ -229,6 +251,8 @@
         importFileElement.addEventListener('change', handleImport);
         toggleInstructionsButton.addEventListener('click', toggleInstructions);
         rotateViewButton.addEventListener('click', handleRotateViewClick);
+        settingsButton.addEventListener('click', handleSettingsClick);
+        document.getElementById("close-settings-button").addEventListener('click', closeSettings);
         window.addEventListener("resize", resizeHandler);
       }
 
@@ -260,6 +284,67 @@
         });
         requestRedraw();
       }
+
+      function handleSettingsClick() {
+        canvasContainer.style.display="none";
+        settingsContainer.style.display="block";
+        document.getElementById("roomWidth").value = Math.round(currentRoomWidthPx/pixelsPerMeter*100);
+        document.getElementById("roomHeight").value = Math.round(currentRoomHeightPx/pixelsPerMeter*100);
+        document.getElementById("bgcolor").value = bgColor;
+        document.getElementById("tablecolor").value = tableColor;
+        let tr=[];
+        tr.push("<th>Name</th><th>Breite</th><th>Höhe</th><th>Plätze</th>")
+        tableTypes.forEach( tt => {
+          tr.push(`<tr><td contenteditable="true">${tt.name}</td><td contenteditable="true">${Math.round(tt.w*100)}</td><td contenteditable="true">${Math.round(tt.h*100)}</td><td contenteditable="true">${tt.num}</td></tr>`);
+        });
+        tr.push(`<tr><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td></tr>`);
+        let tab = document.getElementById("tableSizes");
+        tab.border=1;
+        tab.innerHTML="";
+        tab.insertAdjacentHTML("afterbegin", tr.join(""));
+      }
+
+      function closeSettings() {
+        let tr = document.querySelectorAll("#tableSizes tr");
+        let newTypes=[];
+        let err=false;
+        for (let i=1; i<tr.length; i++) {
+          let val=[];
+          for (let td of tr[i].children) val.push(td.textContent.trim());
+          if (val.join("") == "") continue;
+          for (let c of tr[i].children) c.style.backgroundColor="";
+          let re=[/^.*$/, /^\d\d+$/, /^\d\d+$/, /^\d$/];
+          let ok=true;
+          for (let k=0; k<4; k++)
+            if (!re[k].test(val[k])) {
+              ok=false;
+              tr[i].children[k].style.backgroundColor="salmon";
+            }
+          newTypes.push({name: val[0], w: parseInt(val[1])/100, h: parseInt(val[2])/100, num: parseInt(val[3])});
+          if (!ok) err=true;
+        }
+        if (!err) {
+          tables.forEach( t=> {
+            t.type = tableTypes.indexOf(t.type);
+            if (t.type>=newTypes.length) t.type=0;
+          });
+          tableTypes.splice(0,tableTypes.length);
+          tableTypes.push(...newTypes);
+          tables.forEach( t=> t.type = tableTypes[t.type]);
+          updateTableSizes();
+           canvasContainer.style.display="block";
+          settingsContainer.style.display="none";
+          tableColor = document.getElementById("tablecolor").value;
+          bgColor = document.getElementById("bgcolor").value;
+          currentRoomWidthPx = document.getElementById("roomWidth").value/100*pixelsPerMeter;
+          currentRoomHeightPx = document.getElementById("roomHeight").value/100*pixelsPerMeter;
+          //canvas.width = currentRoomWidthPx;
+          //canvas.height = currentRoomHeightPx;
+          resizeHandler();
+          requestRedraw();
+        }
+      }
+
       function handleKeyDown(e) {
         if (e.key === 'Shift') {
           shiftKeyPressed = true;
@@ -271,11 +356,10 @@
             e.preventDefault();
           }
         } else if (e.key === 'Plus' || e.key === '+') { // Neuer Tisch
-          let nr = prompt("Art des Tisches?\n1: Einzel\n2: Doppel");
+          let pr="Art des Tisches:\n"+tableTypes.map((tt,i) => `${i+1}: ${tt.name}\n`).join("");
+          let nr = prompt(pr);
           let type;
-          if (nr==1) type=tableTypes.find(t => t.name=="Einzel");
-          else if (nr==2) type=tableTypes.find(t => t.name=="Doppel");
-          else return;
+          if (nr>=1 && nr<=tableTypes.length) type=tableTypes[nr-1]; else return;
           deselectAll();
           let newTable = createTableData(currentRoomWidthPx/2, currentRoomHeightPx/2, type, 0, [], false);
           selectElement(newTable.id);
@@ -579,7 +663,7 @@
 
         // Tischtypen einlesen und Pixelgrößen berechnen:
         if (typeof data.tableTypes !== undefined) {
-          tableTypes.slice(0, tableTypes.length);
+          tableTypes.splice(0, tableTypes.length);
           tableTypes.push(...data.tableTypes);
           tableTypes.forEach( t => {
             t.wPx = t.w*pixelsPerMeter;
@@ -698,7 +782,7 @@
         if (!redrawRequested) { redrawRequested = true; requestAnimationFrame(() => { drawClassroom(); redrawRequested = false; }); }
       }
       function drawClassroom() {
-        if (!ctx) return; ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#c0c0c0';
+        if (!ctx) return; ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = bgColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.save();
         ctx.beginPath();
@@ -719,7 +803,7 @@
         if (!table) return;
         ctx.save(); ctx.translate(table.lx, table.ly); ctx.rotate(table.rotation * DEG_TO_RAD); ctx.beginPath();
         ctx.rect(-table.type.wPx / 2, -table.type.hPx / 2, table.type.wPx, table.type.hPx);
-        ctx.fillStyle = table.isSelected ? '#8de' : 'white'; ctx.strokeStyle = table.isSelected ? 'blue' : '#8b4513';
+        ctx.fillStyle = table.isSelected ? '#8de' : tableColor; ctx.strokeStyle = table.isSelected ? 'blue' : '#8b4513';
         ctx.lineWidth = table.isSelected ? 2 : 1;
         ctx.fill(); ctx.stroke();
         ctx.restore();
@@ -773,5 +857,4 @@
     });
   </script>
 </body>
-
 </html>
