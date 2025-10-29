@@ -7,13 +7,29 @@ import math
 from collections import defaultdict
 
 class SudokuSolver:
-    def __init__(self, N, active_cells=None, regions=None, extras=None, fixed=None):
+    """
+    N: number of values = number of rows and columns in classic sudoku
+    regions: list of list of cells (standard sudoku: 9 rows + 9 columns + 9 blocks)
+    active_cells: list of cells to be filled in
+    extras: list of thermometers, of regions with given sums, and of "str8ts" e.g. {"type": "sum", "value": 15, "sum": [(0,0),(0,1),(0,2)]}
+    fixed: dict of predefined cells with their values
+    check_func: additional check to be performed whenever a new value should be inserted into the grid
+    """
+    def __init__(self, N, regions, active_cells=None, extras=None, fixed=None, check_func=None):
         self.N = N
-        self.cells = [(r, c) for r in range(N) for c in range(N)]
-        self.active = set(self.cells) if active_cells is None else set(active_cells)
         self.regions = regions
         if not self.regions:
           self.regions = self._default_regions()
+
+        cells = set()
+        for region in self.regions:
+            for cell in region:
+                cells.add(cell)
+        self.cells = list(cells)
+        self.cells.sort(key = lambda cell: cell[0]*100+cell[1])
+        
+        self.active = set(self.cells) if active_cells is None else set(active_cells)
+
         self.extras = extras or []  # unified list for thermometers and sums
         self.fixed = fixed or {}
         if self.regions is None or not self.regions:
@@ -27,33 +43,20 @@ class SudokuSolver:
             for a in region:
                 if a not in self.active: continue
                 self.peers[a].update([b for b in region if b != a])
-        self.calc_options()
+        self._calc_options()
+        self.check_func = check_func
 
-    def _default_regions(self):
-        s = int(math.isqrt(self.N))
-        if s * s == self.N:
-            regions = []
-            for br in range(s):
-                for bc in range(s):
-                    block = []
-                    for r in range(br * s, (br + 1) * s):
-                        for c in range(bc * s, (bc + 1) * s):
-                            block.append((r, c))
-                    regions.append(block)
-            for r in range(self.N):
-                regions.append([(r, i) for i in range(self.N)])
-            for c in range(self.N):
-                regions.append([(i, c) for i in range(self.N)])
-            return regions
-        else:
-            return [[(r, c) for c in range(self.N)] for r in range(self.N)]
-
-    def solve(self, max_solutions=1, time_limit=10.0):
+    """
+    Solve the sudoku.
+    time_limit: after this time (in seconds) the solving process will be stopped
+    """
+    def solve(self, time_limit=10.0):
         self.tmax = time.time() + time_limit
         self.step=0
-        return self.solve_recursive(self.fixed.copy())
+        return self._solve_recursive(self.fixed.copy())
 
-    def solve_recursive(self, assignment):
+
+    def _solve_recursive(self, assignment):
         if time.time()>self.tmax: return None
         self.step+=1
         required_cells = {c for c in self.active}
@@ -66,7 +69,7 @@ class SudokuSolver:
                 return None
         cell = min(unassigned, key=lambda x: len(self.options[x]))
         for val in sorted(self.options[cell]):
-            if not self.is_consistent(cell, val, assignment):
+            if not self._is_consistent(cell, val, assignment):
                 continue
             assignment[cell] = val
             saved = []
@@ -75,7 +78,7 @@ class SudokuSolver:
                 if val in self.options[p]:
                     saved.append(p)
                     self.options[p].discard(val)
-            result = self.solve_recursive(assignment)
+            result = self._solve_recursive(assignment)
             if result:
                 return result
             del assignment[cell]
@@ -84,7 +87,7 @@ class SudokuSolver:
         return None
 
     # calculate remaining number options per cell
-    def calc_options(self):
+    def _calc_options(self):
         self.options = {}
         self.cell_to_extras = { c: [] for c in self.cells }
         # lookup table for extras
@@ -101,6 +104,7 @@ class SudokuSolver:
             for p in self.peers[c]:
                 if p in self.fixed:
                     self.options[c].discard(self.fixed[p])
+
         # handle extras
         for c in self.active:
             for extra in self.cell_to_extras.get(c, []):
@@ -196,7 +200,7 @@ class SudokuSolver:
                             if c not in self.fixed and c in self.active:
                                 self.options[c].intersection_update(allowed)
 
-    def is_consistent(self, cell, val, assignment):
+    def _is_consistent(self, cell, val, assignment):
         # check thermometers and sums in extras
         for extra in self.cell_to_extras.get(cell, []):
             cells = extra["cells"]
@@ -225,8 +229,6 @@ class SudokuSolver:
             elif extra["type"] == "str8ts":
                 vals = [assignment[c] for c in cells if c in assignment]
                 vals.append(val)
-                #dbg = (6,1) in cells and len(cells)==2
-                #if (dbg): print("check str8 ",cells, vals,"inserting ",val)
                 if len(vals) >= 2:
                     minv = min(vals)
                     maxv = max(vals)
@@ -234,11 +236,18 @@ class SudokuSolver:
                     if span > len(cells):
                         return False  # gap too large
                     # if all cells in str8t region are assigned, check if there is no gap:
-                    #if len(vals) == len(cells):
-                    #    if set(range(minv, maxv + 1)) != set(vals):
-                    #        return False
+                    if len(vals) == len(cells):
+                        if len(set(vals))!=len(cells):
+                            return False
+        if self.check_func:
+            if not self.check_func(cell, val, assignment):
+                return False
         return True
 
+    """
+    Check for obvious inconsistencies (e.g. same number twice in the same ragion).
+    Returns a list of errors (consisting of a pair of cells and a message).
+    """
     def check(self):
         err = []
         for r in self.regions:
@@ -251,5 +260,5 @@ class SudokuSolver:
                         and c2 in self.fixed
                         and self.fixed[c1] == self.fixed[c2]
                     ):
-                        err.append([[c1, c2], f"{self.fixed[c1]} appears multiple times in a group."])
+                        err.append([(c1, c2), f"{self.fixed[c1]} appears multiple times in a group."])
         return err
