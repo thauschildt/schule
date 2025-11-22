@@ -40,9 +40,9 @@ class ClassicPainter(SudokuPainter):
 
   def default_regions(self):
     s = int(math.isqrt(self.cols))
+    regions = []
     if self.cols == self.rows and s * s == self.cols:
       # square blocks
-      regions = []
       for br in range(s):
         for bc in range(s):
           block = []
